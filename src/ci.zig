@@ -1,9 +1,18 @@
+//! CI/CD Integration - Helpers for continuous integration environments
+//!
+//! Features:
+//! - Auto-detection of CI environments (GitHub Actions, GitLab CI, etc.)
+//! - Platform-specific output formatting
+//! - Regression checking with build failure support
+//! - Summary generation for CI logs
+
 const std = @import("std");
 const bench = @import("bench");
 const comparison = @import("comparison");
 const Allocator = std.mem.Allocator;
 const BenchmarkResult = bench.BenchmarkResult;
 
+/// Configuration for CI/CD integration
 pub const CIConfig = struct {
     fail_on_regression: bool = true,
     regression_threshold: f64 = 10.0, // 10% slower

@@ -30,6 +30,10 @@ pub fn build(b: *std.Build) void {
     ci_module.addImport("bench", bench_module);
     ci_module.addImport("comparison", comparison_module);
 
+    const flamegraph_module = b.createModule(.{
+        .root_source_file = b.path("src/flamegraph.zig"),
+    });
+
     // Example executables
     const examples = [_]struct {
         name: []const u8,
@@ -57,6 +61,7 @@ pub fn build(b: *std.Build) void {
             exe_module.addImport("comparison", comparison_module);
             exe_module.addImport("memory_profiler", memory_profiler_module);
             exe_module.addImport("ci", ci_module);
+            exe_module.addImport("flamegraph", flamegraph_module);
         }
 
         const exe = b.addExecutable(.{
@@ -96,6 +101,7 @@ pub fn build(b: *std.Build) void {
             exe_module.addImport("comparison", comparison_module);
             exe_module.addImport("memory_profiler", memory_profiler_module);
             exe_module.addImport("ci", ci_module);
+            exe_module.addImport("flamegraph", flamegraph_module);
         }
 
         const exe = b.addExecutable(.{

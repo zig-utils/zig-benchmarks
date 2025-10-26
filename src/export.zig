@@ -1,20 +1,31 @@
+//! Export module - Export benchmark results to various formats
+//!
+//! Supports:
+//! - JSON format with timestamps
+//! - CSV format for spreadsheet analysis
+
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
 const BenchmarkResult = bench.BenchmarkResult;
 
+/// Supported export formats
 pub const ExportFormat = enum {
-    json,
-    csv,
+    json, // JSON format with timestamp and benchmarks array
+    csv, // CSV format with header row
 };
 
+/// Exporter for benchmark results
 pub const Exporter = struct {
     allocator: Allocator,
 
+    /// Initialize a new exporter
     pub fn init(allocator: Allocator) Exporter {
         return .{ .allocator = allocator };
     }
 
+    /// Export benchmark results to a file in the specified format
+    /// Creates a new file or overwrites existing file at path
     pub fn exportToFile(self: Exporter, results: []const BenchmarkResult, path: []const u8, format: ExportFormat) !void {
         const file = try std.fs.cwd().createFile(path, .{});
         defer file.close();
@@ -25,6 +36,7 @@ pub const Exporter = struct {
         }
     }
 
+    /// Write results in JSON format with timestamp
     fn writeJson(self: Exporter, file: std.fs.File, results: []const BenchmarkResult) !void {
         _ = self;
 

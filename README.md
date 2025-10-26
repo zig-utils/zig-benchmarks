@@ -262,6 +262,9 @@ The `examples/` directory contains several complete examples:
 - `basic.zig` - Simple benchmarks comparing different operations
 - `async.zig` - Async/error-handling benchmark examples
 - `custom_options.zig` - Customizing benchmark parameters
+- `filtering_baseline.zig` - Benchmark filtering and baseline saving
+- `allocators.zig` - Comparing different allocator performance
+- `advanced_features.zig` - Complete demonstration of all advanced features
 
 Run examples:
 
@@ -273,6 +276,9 @@ zig build examples
 zig build run-basic
 zig build run-async
 zig build run-custom_options
+zig build run-filtering_baseline
+zig build run-allocators
+zig build run-advanced_features
 ```
 
 ## Output Format
@@ -337,7 +343,7 @@ zig build run-basic
 
 ## Requirements
 
-- Zig 0.13.0 or later
+- Zig 0.15.0 or later
 
 ## Contributing
 
@@ -351,16 +357,140 @@ MIT License - see LICENSE file for details
 
 Inspired by [mitata](https://github.com/evanwashere/mitata), a beautiful JavaScript benchmarking library.
 
-## Roadmap
+## Advanced Features
 
-- [ ] JSON/CSV export for results
-- [ ] Historical comparison (compare against saved baselines)
-- [ ] Memory profiling integration
-- [ ] Flamegraph generation support
-- [ ] CI/CD integration helpers
-- [ ] Regression detection
-- [ ] Custom allocator benchmarking
-- [ ] Benchmark filtering (run specific benchmarks by pattern)
+All advanced features are now implemented and available! See the `examples/advanced_features.zig` for a complete demonstration.
+
+### ✅ Implemented Features
+
+- **JSON/CSV Export** - Export benchmark results to JSON or CSV format
+- **Historical Comparison** - Compare current results against saved baselines with regression detection
+- **Memory Profiling** - Track memory allocations, peak usage, and allocation counts
+- **Flamegraph Support** - Generate flamegraph-compatible folded stack format and profiler instructions
+- **CI/CD Integration** - Built-in helpers for GitHub Actions, GitLab CI, and generic CI systems
+- **Regression Detection** - Automatic detection of performance regressions with configurable thresholds
+- **Custom Allocator Benchmarking** - Built-in support for benchmarking with different allocators
+- **Benchmark Filtering** - Run specific benchmarks by name pattern
+
+### Export Results to JSON/CSV
+
+```zig
+const export_mod = @import("export");
+
+const exporter = export_mod.Exporter.init(allocator);
+
+// Export to JSON
+try exporter.exportToFile(results, "benchmark_results.json", .json);
+
+// Export to CSV
+try exporter.exportToFile(results, "benchmark_results.csv", .csv);
+```
+
+### Baseline Comparison & Regression Detection
+
+```zig
+const comparison_mod = @import("comparison");
+
+// Create comparator with 10% regression threshold
+const comparator = comparison_mod.Comparator.init(allocator, 10.0);
+
+// Compare current results against baseline
+const comparisons = try comparator.compare(results, "baseline.json");
+defer allocator.free(comparisons);
+
+// Print comparison report
+try comparator.printComparison(stdout, comparisons);
+```
+
+### Memory Profiling
+
+```zig
+const memory_profiler = @import("memory_profiler");
+
+// Create profiling allocator
+var profiling_allocator = memory_profiler.ProfilingAllocator.init(base_allocator);
+const tracked_allocator = profiling_allocator.allocator();
+
+// Run benchmark with tracked allocator
+// ... benchmark code ...
+
+// Get memory statistics
+const stats = profiling_allocator.getStats();
+// stats contains: peak_allocated, total_allocated, total_freed,
+//                 current_allocated, allocation_count, free_count
+```
+
+### CI/CD Integration
+
+```zig
+const ci = @import("ci");
+
+// Detect CI environment automatically
+const ci_format = ci.detectCIEnvironment();
+
+// Create CI helper with configuration
+var ci_helper = ci.CIHelper.init(allocator, .{
+    .fail_on_regression = true,
+    .regression_threshold = 10.0,
+    .baseline_path = "baseline.json",
+    .output_format = ci_format,
+});
+
+// Generate CI-specific summary
+try ci_helper.generateSummary(results);
+
+// Check for regressions
+const has_regression = try ci_helper.checkRegressions(results);
+if (has_regression and ci_helper.shouldFailBuild(has_regression)) {
+    std.process.exit(1); // Fail the build
+}
+```
+
+### Flamegraph Generation
+
+```zig
+const flamegraph_mod = @import("flamegraph");
+
+const flamegraph_gen = flamegraph_mod.FlamegraphGenerator.init(allocator);
+
+// Generate folded stack format for flamegraph.pl
+try flamegraph_gen.generateFoldedStacks("benchmark.folded", "MyBenchmark", 10000);
+
+// Generate profiler instructions
+try flamegraph_gen.generateInstructions(stdout, "my_executable");
+
+// Detect available profilers
+const recommended = flamegraph_mod.ProfilerIntegration.recommendProfiler();
+```
+
+### Benchmark Filtering
+
+```zig
+var suite = bench.BenchmarkSuite.init(allocator);
+defer suite.deinit();
+
+try suite.add("Fast Operation", fastOp);
+try suite.add("Slow Operation", slowOp);
+try suite.add("Fast Algorithm", fastAlgo);
+
+// Only run benchmarks matching "Fast"
+suite.setFilter("Fast");
+
+try suite.run(); // Only runs "Fast Operation" and "Fast Algorithm"
+```
+
+### Custom Allocator Benchmarking
+
+```zig
+var suite = bench.BenchmarkSuite.init(allocator);
+defer suite.deinit();
+
+// Benchmark with custom allocator
+try suite.addWithAllocator("GPA Benchmark", benchmarkFunc, gpa_allocator);
+try suite.addWithAllocator("Arena Benchmark", benchmarkFunc, arena_allocator);
+
+try suite.run();
+```
 
 ## FAQ
 

@@ -1,2 +1,6 @@
 /.zig-cache
 /zig-out
+baseline.json
+benchmark.folded
+benchmark_results.csv
+benchmark_results.json

@@ -6,6 +6,7 @@ const export_mod = @import("export");
 const comparison_mod = @import("comparison");
 const memory_profiler = @import("memory_profiler");
 const ci = @import("ci");
+const flamegraph_mod = @import("flamegraph");
 
 var global_sum: u64 = 0;
 
@@ -153,5 +154,22 @@ pub fn main() !void {
         }
     }
 
+    // 6. Flamegraph Support Demo
+    std.debug.print("\n{s}=== Flamegraph Support Demo ==={s}\n", .{ bench.Formatter.BOLD, bench.Formatter.RESET });
+
+    const flamegraph_gen = flamegraph_mod.FlamegraphGenerator.init(allocator);
+
+    // Generate folded stack format
+    try flamegraph_gen.generateFoldedStacks("benchmark.folded", "Fast Benchmark", 10000);
+
+    // Show instructions for profiling
+    std.debug.print("\n{s}Profiler Detection:{s}\n", .{ bench.Formatter.BOLD, bench.Formatter.RESET });
+    const recommended = flamegraph_mod.ProfilerIntegration.recommendProfiler();
+    std.debug.print("  Recommended profiler for your platform: {s}\n", .{recommended});
+
+    // Generate call tree
+    try flamegraph_gen.generateCallTree(stdout, "Fast Benchmark", 162);
+
     std.debug.print("\n{s}✓ Advanced features demo complete!{s}\n", .{ bench.Formatter.GREEN, bench.Formatter.RESET });
+    std.debug.print("{s}✓ All 6 advanced features demonstrated successfully!{s}\n", .{ bench.Formatter.GREEN, bench.Formatter.RESET });
 }

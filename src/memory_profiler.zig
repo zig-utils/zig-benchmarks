@@ -1,6 +1,15 @@
+//! Memory Profiler - Track memory allocations during benchmarks
+//!
+//! Features:
+//! - ProfilingAllocator that wraps any allocator
+//! - Tracks peak memory usage, total allocated/freed, allocation counts
+//! - Zero overhead when not in use
+//! - Compatible with all Zig allocator interfaces
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+/// Statistics about memory usage during a benchmark
 pub const MemoryStats = struct {
     peak_allocated: usize = 0,
     total_allocated: usize = 0,

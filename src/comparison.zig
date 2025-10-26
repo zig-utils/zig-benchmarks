@@ -1,15 +1,35 @@
+//! Comparison module - Compare benchmark results against saved baselines
+//!
+//! Features:
+//! - Load baseline results from JSON files
+//! - Compare current vs baseline with percentage change
+//! - Automatic regression detection with configurable thresholds
+//! - Colored output showing improvements and regressions
+
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
 const BenchmarkResult = bench.BenchmarkResult;
 
+/// Result of comparing a benchmark against its baseline
 pub const ComparisonResult = struct {
+    /// Name of the benchmark
     name: []const u8,
+
+    /// Current mean execution time in nanoseconds
     current_mean: f64,
+
+    /// Baseline mean execution time in nanoseconds
     baseline_mean: f64,
+
+    /// Percentage change (positive = slower, negative = faster)
     change_percent: f64,
+
+    /// Whether this is considered a performance regression
     is_regression: bool,
-    regression_threshold: f64 = 10.0, // 10% slower is considered regression
+
+    /// Threshold percentage for regression detection (default: 10%)
+    regression_threshold: f64 = 10.0
 
     pub fn format(self: ComparisonResult, allocator: Allocator) ![]u8 {
         var buf = std.ArrayList(u8){};

@@ -1,34 +1,89 @@
+//! Zig Bench - A modern, performant benchmark framework for Zig
+//!
+//! This module provides a comprehensive benchmarking framework with:
+//! - High-precision timing using std.time.Timer
+//! - Statistical analysis (mean, stddev, percentiles)
+//! - Beautiful CLI output with colors
+//! - Flexible configuration options
+//! - Support for async/error-handling functions
+//! - Baseline comparison and filtering
+//! - Custom allocator support
+
 const std = @import("std");
 const Timer = std.time.Timer;
 const Allocator = std.mem.Allocator;
 
+/// Configuration options for individual benchmarks
 pub const BenchmarkOptions = struct {
+    /// Number of warmup iterations to run before measuring (default: 5)
+    /// Warmup helps stabilize CPU caches and frequency scaling
     warmup_iterations: u32 = 5,
+
+    /// Minimum number of iterations to execute (default: 10)
+    /// Ensures enough samples for statistical analysis
     min_iterations: u32 = 10,
+
+    /// Maximum number of iterations to execute (default: 10,000)
+    /// Prevents extremely fast operations from running too long
     max_iterations: u32 = 10_000,
-    min_time_ns: u64 = 1_000_000_000, // 1 second
+
+    /// Minimum time to run benchmarks in nanoseconds (default: 1 second)
+    /// Benchmarks continue until this time elapses AND min_iterations are met
+    min_time_ns: u64 = 1_000_000_000,
+
+    /// Optional baseline file path for comparison (reserved for future use)
     baseline: ?[]const u8 = null,
-    filter: ?[]const u8 = null, // Filter benchmarks by name pattern
+
+    /// Optional filter pattern to match benchmark names
+    /// Only benchmarks matching this substring will run
+    filter: ?[]const u8 = null,
 };
 
+/// Results from a benchmark run, containing timing samples and statistical analysis
 pub const BenchmarkResult = struct {
+    /// Name of the benchmark
     name: []const u8,
+
+    /// Raw timing samples in nanoseconds
     samples: std.ArrayList(u64),
+
+    /// Allocator used for samples
     allocator: Allocator,
+
+    /// Mean (average) execution time in nanoseconds
     mean: f64,
+
+    /// Standard deviation of execution times
     stddev: f64,
+
+    /// Minimum execution time in nanoseconds
     min: u64,
+
+    /// Maximum execution time in nanoseconds
     max: u64,
+
+    /// 50th percentile (median) in nanoseconds
     p50: u64,
+
+    /// 75th percentile in nanoseconds
     p75: u64,
+
+    /// 99th percentile in nanoseconds
     p99: u64,
+
+    /// Operations per second (1e9 / mean)
     ops_per_sec: f64,
+
+    /// Total number of iterations executed
     iterations: u64,
 
+    /// Free the samples ArrayList
     pub fn deinit(self: *BenchmarkResult) void {
         self.samples.deinit(self.allocator);
     }
 
+    /// Export this result as a JSON string (legacy format)
+    /// Note: Use the export module for more advanced export features
     pub fn toJson(self: *const BenchmarkResult, allocator: Allocator) ![]u8 {
         var string = std.ArrayList(u8){};
         defer string.deinit(allocator);
@@ -51,7 +106,10 @@ pub const BenchmarkResult = struct {
     }
 };
 
+/// Statistical analysis functions for benchmark samples
 pub const Stats = struct {
+    /// Calculate the arithmetic mean (average) of samples
+    /// Returns 0.0 for empty samples
     pub fn mean(samples: []const u64) f64 {
         if (samples.len == 0) return 0.0;
         var sum: f64 = 0.0;
@@ -61,6 +119,8 @@ pub const Stats = struct {
         return sum / @as(f64, @floatFromInt(samples.len));
     }
 
+    /// Calculate the standard deviation using Bessel's correction (n-1)
+    /// Returns 0.0 for samples with length <= 1
     pub fn stddev(samples: []const u64, mean_val: f64) f64 {
         if (samples.len <= 1) return 0.0;
         var variance: f64 = 0.0;
@@ -71,6 +131,9 @@ pub const Stats = struct {
         return @sqrt(variance / @as(f64, @floatFromInt(samples.len - 1)));
     }
 
+    /// Calculate a percentile value (p should be between 0.0 and 1.0)
+    /// Note: This sorts the samples array in-place
+    /// Examples: p=0.5 for median (P50), p=0.99 for P99
     pub fn percentile(samples: []u64, p: f64) u64 {
         if (samples.len == 0) return 0;
         std.mem.sort(u64, samples, {}, std.sort.asc(u64));
@@ -78,6 +141,8 @@ pub const Stats = struct {
         return samples[@min(index, samples.len - 1)];
     }
 
+    /// Find the minimum value in samples
+    /// Returns 0 for empty samples
     pub fn min(samples: []const u64) u64 {
         if (samples.len == 0) return 0;
         var min_val = samples[0];
@@ -87,6 +152,8 @@ pub const Stats = struct {
         return min_val;
     }
 
+    /// Find the maximum value in samples
+    /// Returns 0 for empty samples
     pub fn max(samples: []const u64) u64 {
         if (samples.len == 0) return 0;
         var max_val = samples[0];
@@ -211,12 +278,22 @@ pub const Benchmark = struct {
     }
 };
 
+/// A suite of benchmarks to run together
+/// Manages multiple benchmarks and provides comparison features
 pub const BenchmarkSuite = struct {
+    /// List of benchmarks to run
     benchmarks: std.ArrayList(Benchmark),
+
+    /// Allocator for managing benchmarks
     allocator: Allocator,
+
+    /// Optional filter pattern - only benchmarks matching this substring will run
     filter: ?[]const u8 = null,
+
+    /// Optional baseline file path for saving results
     baseline_path: ?[]const u8 = null,
 
+    /// Initialize a new benchmark suite
     pub fn init(allocator: Allocator) BenchmarkSuite {
         return .{
             .benchmarks = std.ArrayList(Benchmark){},
@@ -224,22 +301,29 @@ pub const BenchmarkSuite = struct {
         };
     }
 
+    /// Clean up the suite and free resources
     pub fn deinit(self: *BenchmarkSuite) void {
         self.benchmarks.deinit(self.allocator);
     }
 
+    /// Add a simple benchmark function to the suite
+    /// The function should take no arguments and return void
     pub fn add(self: *BenchmarkSuite, name: []const u8, func: *const fn () void) !void {
         try self.benchmarks.append(self.allocator, Benchmark.init(name, func));
     }
 
+    /// Add a benchmark with custom options (warmup, iterations, timing)
     pub fn addWithOptions(self: *BenchmarkSuite, name: []const u8, func: *const fn () void, opts: BenchmarkOptions) !void {
         try self.benchmarks.append(self.allocator, Benchmark.withOptions(name, func, opts));
     }
 
+    /// Add a benchmark that requires an allocator parameter
+    /// Useful for testing allocation-heavy operations
     pub fn addWithAllocator(self: *BenchmarkSuite, name: []const u8, func: *const fn (Allocator) void) !void {
         try self.benchmarks.append(self.allocator, Benchmark.withAllocator(name, func));
     }
 
+    /// Add a benchmark with both custom allocator and options
     pub fn addWithAllocatorAndOptions(self: *BenchmarkSuite, name: []const u8, func: *const fn (Allocator) void, opts: BenchmarkOptions) !void {
         try self.benchmarks.append(self.allocator, Benchmark.withAllocatorAndOptions(name, func, opts));
     }
@@ -317,17 +401,19 @@ pub const BenchmarkSuite = struct {
     }
 };
 
+/// Formatter for beautiful CLI output with ANSI colors and formatting
 pub const Formatter = struct {
-    // ANSI color codes
-    pub const RESET = "\x1b[0m";
-    pub const BOLD = "\x1b[1m";
-    pub const DIM = "\x1b[2m";
-    pub const CYAN = "\x1b[36m";
-    pub const GREEN = "\x1b[32m";
-    pub const YELLOW = "\x1b[33m";
-    pub const BLUE = "\x1b[34m";
-    pub const MAGENTA = "\x1b[35m";
+    // ANSI color codes for terminal output
+    pub const RESET = "\x1b[0m"; // Reset all attributes
+    pub const BOLD = "\x1b[1m"; // Bold text
+    pub const DIM = "\x1b[2m"; // Dimmed text
+    pub const CYAN = "\x1b[36m"; // Cyan color
+    pub const GREEN = "\x1b[32m"; // Green color (used for success/fast)
+    pub const YELLOW = "\x1b[33m"; // Yellow color (used for warnings/comparisons)
+    pub const BLUE = "\x1b[34m"; // Blue color (used for info)
+    pub const MAGENTA = "\x1b[35m"; // Magenta color
 
+    /// Print the benchmark suite header
     pub fn printHeader(self: Formatter, file: std.fs.File) !void {
         _ = self;
         var buf: [256]u8 = undefined;
