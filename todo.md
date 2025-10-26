@@ -6,9 +6,11 @@
 - [x] Implement statistical analysis (mean, stddev, percentiles)
 - [x] Create pretty CLI output formatter with colors
 - [x] Add support for async benchmarks
-- [ ] Implement comparison and baseline features
-- [ ] Add support for custom allocators in benchmarks
-- [ ] Implement benchmark filtering (run specific benchmarks)
+- [x] Test and verify builds successfully on Zig 0.15
+- [x] Fix buffer overflow in formatTime/formatOps functions
+- [x] Implement comparison and baseline features
+- [x] Add support for custom allocators in benchmarks
+- [x] Implement benchmark filtering (run specific benchmarks)
 
 ## Examples & Documentation
 - [x] Create example benchmarks demonstrating usage

@@ -8,11 +8,13 @@ pub const BenchmarkOptions = struct {
     max_iterations: u32 = 10_000,
     min_time_ns: u64 = 1_000_000_000, // 1 second
     baseline: ?[]const u8 = null,
+    filter: ?[]const u8 = null, // Filter benchmarks by name pattern
 };
 
 pub const BenchmarkResult = struct {
     name: []const u8,
     samples: std.ArrayList(u64),
+    allocator: Allocator,
     mean: f64,
     stddev: f64,
     min: u64,
@@ -24,7 +26,28 @@ pub const BenchmarkResult = struct {
     iterations: u64,
 
     pub fn deinit(self: *BenchmarkResult) void {
-        self.samples.deinit();
+        self.samples.deinit(self.allocator);
+    }
+
+    pub fn toJson(self: *const BenchmarkResult, allocator: Allocator) ![]u8 {
+        var string = std.ArrayList(u8){};
+        defer string.deinit(allocator);
+
+        var writer = string.writer(allocator);
+        try writer.print("{{\"name\":\"{s}\",\"mean\":{d:.2},\"stddev\":{d:.2},\"min\":{d},\"max\":{d},\"p50\":{d},\"p75\":{d},\"p99\":{d},\"ops_per_sec\":{d:.2},\"iterations\":{d}}}", .{
+            self.name,
+            self.mean,
+            self.stddev,
+            self.min,
+            self.max,
+            self.p50,
+            self.p75,
+            self.p99,
+            self.ops_per_sec,
+            self.iterations,
+        });
+
+        return string.toOwnedSlice(allocator);
     }
 };
 
@@ -78,6 +101,7 @@ pub const Benchmark = struct {
     name: []const u8,
     func: *const fn () void,
     opts: BenchmarkOptions,
+    allocator_func: ?*const fn (Allocator) void = null,
 
     pub fn init(name: []const u8, func: *const fn () void) Benchmark {
         return .{
@@ -95,14 +119,38 @@ pub const Benchmark = struct {
         };
     }
 
+    pub fn withAllocator(name: []const u8, func: *const fn (Allocator) void) Benchmark {
+        return .{
+            .name = name,
+            .func = undefined,
+            .opts = .{},
+            .allocator_func = func,
+        };
+    }
+
+    pub fn withAllocatorAndOptions(name: []const u8, func: *const fn (Allocator) void, opts: BenchmarkOptions) Benchmark {
+        return .{
+            .name = name,
+            .func = undefined,
+            .opts = opts,
+            .allocator_func = func,
+        };
+    }
+
     pub fn run(self: *const Benchmark, allocator: Allocator) !BenchmarkResult {
         var samples = std.ArrayList(u64){};
         errdefer samples.deinit(allocator);
 
+        const is_allocator_func = self.allocator_func != null;
+
         // Warmup phase
         var i: u32 = 0;
         while (i < self.opts.warmup_iterations) : (i += 1) {
-            self.func();
+            if (is_allocator_func) {
+                self.allocator_func.?(allocator);
+            } else {
+                self.func();
+            }
         }
 
         // Benchmark phase
@@ -112,7 +160,11 @@ pub const Benchmark = struct {
 
         while (iterations < self.opts.max_iterations and total_time < self.opts.min_time_ns) {
             timer.reset();
-            self.func();
+            if (is_allocator_func) {
+                self.allocator_func.?(allocator);
+            } else {
+                self.func();
+            }
             const elapsed = timer.read();
             try samples.append(allocator, elapsed);
             total_time += elapsed;
@@ -145,6 +197,7 @@ pub const Benchmark = struct {
         return BenchmarkResult{
             .name = self.name,
             .samples = samples,
+            .allocator = allocator,
             .mean = mean_val,
             .stddev = stddev_val,
             .min = min_val,
@@ -161,6 +214,8 @@ pub const Benchmark = struct {
 pub const BenchmarkSuite = struct {
     benchmarks: std.ArrayList(Benchmark),
     allocator: Allocator,
+    filter: ?[]const u8 = null,
+    baseline_path: ?[]const u8 = null,
 
     pub fn init(allocator: Allocator) BenchmarkSuite {
         return .{
@@ -181,11 +236,49 @@ pub const BenchmarkSuite = struct {
         try self.benchmarks.append(self.allocator, Benchmark.withOptions(name, func, opts));
     }
 
-    pub fn run(self: *BenchmarkSuite) !void {
-        var stdout_buf: [8192]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
-        const stdout = &stdout_writer.interface;
+    pub fn addWithAllocator(self: *BenchmarkSuite, name: []const u8, func: *const fn (Allocator) void) !void {
+        try self.benchmarks.append(self.allocator, Benchmark.withAllocator(name, func));
+    }
 
+    pub fn addWithAllocatorAndOptions(self: *BenchmarkSuite, name: []const u8, func: *const fn (Allocator) void, opts: BenchmarkOptions) !void {
+        try self.benchmarks.append(self.allocator, Benchmark.withAllocatorAndOptions(name, func, opts));
+    }
+
+    pub fn setFilter(self: *BenchmarkSuite, filter: []const u8) void {
+        self.filter = filter;
+    }
+
+    pub fn setBaseline(self: *BenchmarkSuite, path: []const u8) void {
+        self.baseline_path = path;
+    }
+
+    fn matchesFilter(self: *const BenchmarkSuite, name: []const u8) bool {
+        if (self.filter == null) return true;
+        // Simple substring match for now
+        return std.mem.indexOf(u8, name, self.filter.?) != null;
+    }
+
+    pub fn saveBaseline(self: *BenchmarkSuite, results: []const BenchmarkResult, path: []const u8) !void {
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+
+        try file.writeAll("[\n");
+        for (results, 0..) |result, i| {
+            const json = try result.toJson(self.allocator);
+            defer self.allocator.free(json);
+            try file.writeAll("  ");
+            try file.writeAll(json);
+            if (i < results.len - 1) {
+                try file.writeAll(",\n");
+            } else {
+                try file.writeAll("\n");
+            }
+        }
+        try file.writeAll("]\n");
+    }
+
+    pub fn run(self: *BenchmarkSuite) !void {
+        const stdout = std.fs.File.stdout();
         const formatter = Formatter{};
 
         try formatter.printHeader(stdout);
@@ -199,58 +292,91 @@ pub const BenchmarkSuite = struct {
         }
 
         for (self.benchmarks.items) |*benchmark| {
+            // Skip if doesn't match filter
+            if (!self.matchesFilter(benchmark.name)) {
+                continue;
+            }
+
             try formatter.printBenchmarkStart(stdout, benchmark.name);
             const result = try benchmark.run(self.allocator);
             try results.append(self.allocator, result);
             try formatter.printResult(stdout, &result);
         }
 
-        try formatter.printSummary(stdout, results.items);
+        if (results.items.len > 0) {
+            try formatter.printSummary(stdout, results.items);
+
+            // Save baseline if path is set
+            if (self.baseline_path) |path| {
+                try self.saveBaseline(results.items, path);
+                var buf: [256]u8 = undefined;
+                const msg = try std.fmt.bufPrint(&buf, "\n{s}Baseline saved to: {s}{s}\n", .{ Formatter.DIM, path, Formatter.RESET });
+                try stdout.writeAll(msg);
+            }
+        }
     }
 };
 
 pub const Formatter = struct {
     // ANSI color codes
-    const RESET = "\x1b[0m";
-    const BOLD = "\x1b[1m";
-    const DIM = "\x1b[2m";
-    const CYAN = "\x1b[36m";
-    const GREEN = "\x1b[32m";
-    const YELLOW = "\x1b[33m";
-    const BLUE = "\x1b[34m";
-    const MAGENTA = "\x1b[35m";
+    pub const RESET = "\x1b[0m";
+    pub const BOLD = "\x1b[1m";
+    pub const DIM = "\x1b[2m";
+    pub const CYAN = "\x1b[36m";
+    pub const GREEN = "\x1b[32m";
+    pub const YELLOW = "\x1b[33m";
+    pub const BLUE = "\x1b[34m";
+    pub const MAGENTA = "\x1b[35m";
 
-    pub fn printHeader(self: Formatter, writer: anytype) !void {
+    pub fn printHeader(self: Formatter, file: std.fs.File) !void {
         _ = self;
-        try writer.print("\n{s}{s}Zig Benchmark Suite{s}\n", .{ BOLD, CYAN, RESET });
-        try writer.print("{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n\n", .{ DIM, RESET });
+        var buf: [256]u8 = undefined;
+        const msg1 = try std.fmt.bufPrint(&buf, "\n{s}{s}Zig Benchmark Suite{s}\n", .{ BOLD, CYAN, RESET });
+        try file.writeAll(msg1);
+        const msg2 = try std.fmt.bufPrint(&buf, "{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n\n", .{ DIM, RESET });
+        try file.writeAll(msg2);
     }
 
-    pub fn printBenchmarkStart(self: Formatter, writer: anytype, name: []const u8) !void {
+    pub fn printBenchmarkStart(self: Formatter, file: std.fs.File, name: []const u8) !void {
         _ = self;
-        try writer.print("{s}▶{s} Running: {s}{s}{s}\n", .{ BLUE, RESET, BOLD, name, RESET });
+        var buf: [512]u8 = undefined;
+        const msg = try std.fmt.bufPrint(&buf, "{s}▶{s} Running: {s}{s}{s}\n", .{ BLUE, RESET, BOLD, name, RESET });
+        try file.writeAll(msg);
     }
 
-    pub fn printResult(self: Formatter, writer: anytype, result: *const BenchmarkResult) !void {
+    pub fn printResult(self: Formatter, file: std.fs.File, result: *const BenchmarkResult) !void {
         _ = self;
+        var buf: [512]u8 = undefined;
 
-        try writer.print("  {s}Iterations:{s} {d}\n", .{ DIM, RESET, result.iterations });
-        try writer.print("  {s}Mean:{s}       {s}{s}{s}\n", .{ DIM, RESET, GREEN, formatTime(result.mean), RESET });
-        try writer.print("  {s}Std Dev:{s}    {s}\n", .{ DIM, RESET, formatTime(result.stddev) });
-        try writer.print("  {s}Min:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.min)) });
-        try writer.print("  {s}Max:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.max)) });
-        try writer.print("  {s}P50:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p50)) });
-        try writer.print("  {s}P75:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p75)) });
-        try writer.print("  {s}P99:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p99)) });
-        try writer.print("  {s}Ops/sec:{s}    {s}{s}{s}\n\n", .{ DIM, RESET, MAGENTA, formatOps(result.ops_per_sec), RESET });
+        var msg = try std.fmt.bufPrint(&buf, "  {s}Iterations:{s} {d}\n", .{ DIM, RESET, result.iterations });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "  {s}Mean:{s}       {s}{s}{s}\n", .{ DIM, RESET, GREEN, formatTime(result.mean).slice(), RESET });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "  {s}Std Dev:{s}    {s}\n", .{ DIM, RESET, formatTime(result.stddev).slice() });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "  {s}Min:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.min)).slice() });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "  {s}Max:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.max)).slice() });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "  {s}P50:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p50)).slice() });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "  {s}P75:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p75)).slice() });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "  {s}P99:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p99)).slice() });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "  {s}Ops/sec:{s}    {s}{s}{s}\n\n", .{ DIM, RESET, MAGENTA, formatOps(result.ops_per_sec).slice(), RESET });
+        try file.writeAll(msg);
     }
 
-    pub fn printSummary(self: Formatter, writer: anytype, results: []const BenchmarkResult) !void {
+    pub fn printSummary(self: Formatter, file: std.fs.File, results: []const BenchmarkResult) !void {
         _ = self;
         if (results.len == 0) return;
 
-        try writer.print("{s}{s}Summary{s}\n", .{ BOLD, CYAN, RESET });
-        try writer.print("{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n", .{ DIM, RESET });
+        var buf: [512]u8 = undefined;
+        var msg = try std.fmt.bufPrint(&buf, "{s}{s}Summary{s}\n", .{ BOLD, CYAN, RESET });
+        try file.writeAll(msg);
+        msg = try std.fmt.bufPrint(&buf, "{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n", .{ DIM, RESET });
+        try file.writeAll(msg);
 
         // Find the fastest benchmark
         var fastest_idx: usize = 0;
@@ -267,7 +393,7 @@ pub const Formatter = struct {
             const relative = result.mean / fastest_mean;
 
             if (is_fastest) {
-                try writer.print("  {s}✓{s} {s}{s}{s} - {s}fastest{s}\n", .{
+                msg = try std.fmt.bufPrint(&buf, "  {s}✓{s} {s}{s}{s} - {s}fastest{s}\n", .{
                     GREEN,
                     RESET,
                     BOLD,
@@ -276,8 +402,9 @@ pub const Formatter = struct {
                     GREEN,
                     RESET,
                 });
+                try file.writeAll(msg);
             } else {
-                try writer.print("  {s}•{s} {s} - {s}{d:.2}x{s} slower\n", .{
+                msg = try std.fmt.bufPrint(&buf, "  {s}•{s} {s} - {s}{d:.2}x{s} slower\n", .{
                     YELLOW,
                     RESET,
                     result.name,
@@ -285,40 +412,48 @@ pub const Formatter = struct {
                     relative,
                     RESET,
                 });
+                try file.writeAll(msg);
             }
         }
-        try writer.print("\n");
+        try file.writeAll("\n");
     }
 
-    fn formatTime(ns: f64) [64]u8 {
-        var buf: [64]u8 = undefined;
-        const formatted = if (ns < 1_000)
-            std.fmt.bufPrint(&buf, "{d:.2} ns", .{ns}) catch unreachable
-        else if (ns < 1_000_000)
-            std.fmt.bufPrint(&buf, "{d:.2} µs", .{ns / 1_000}) catch unreachable
-        else if (ns < 1_000_000_000)
-            std.fmt.bufPrint(&buf, "{d:.2} ms", .{ns / 1_000_000}) catch unreachable
-        else
-            std.fmt.bufPrint(&buf, "{d:.2} s", .{ns / 1_000_000_000}) catch unreachable;
+    const FormattedValue = struct {
+        buf: [64]u8,
+        len: usize,
 
-        var result: [64]u8 = undefined;
-        @memcpy(result[0..formatted.len], formatted);
+        pub fn slice(self: *const FormattedValue) []const u8 {
+            return self.buf[0..self.len];
+        }
+    };
+
+    fn formatTime(ns: f64) FormattedValue {
+        var result: FormattedValue = .{ .buf = undefined, .len = 0 };
+        const formatted = if (ns < 1_000)
+            std.fmt.bufPrint(&result.buf, "{d:.2} ns", .{ns}) catch unreachable
+        else if (ns < 1_000_000)
+            std.fmt.bufPrint(&result.buf, "{d:.2} µs", .{ns / 1_000}) catch unreachable
+        else if (ns < 1_000_000_000)
+            std.fmt.bufPrint(&result.buf, "{d:.2} ms", .{ns / 1_000_000}) catch unreachable
+        else
+            std.fmt.bufPrint(&result.buf, "{d:.2} s", .{ns / 1_000_000_000}) catch unreachable;
+
+        result.len = formatted.len;
         return result;
     }
 
-    fn formatOps(ops: f64) [64]u8 {
-        var buf: [64]u8 = undefined;
+    fn formatOps(ops: f64) FormattedValue {
+        var result: FormattedValue = .{ .buf = undefined, .len = 0 };
         const formatted = if (ops < 1_000)
-            std.fmt.bufPrint(&buf, "{d:.2}", .{ops}) catch unreachable
+            std.fmt.bufPrint(&result.buf, "{d:.2}", .{ops}) catch unreachable
         else if (ops < 1_000_000)
-            std.fmt.bufPrint(&buf, "{d:.2}k", .{ops / 1_000}) catch unreachable
+            std.fmt.bufPrint(&result.buf, "{d:.2}k", .{ops / 1_000}) catch unreachable
         else if (ops < 1_000_000_000)
-            std.fmt.bufPrint(&buf, "{d:.2}M", .{ops / 1_000_000}) catch unreachable
+            std.fmt.bufPrint(&result.buf, "{d:.2}M", .{ops / 1_000_000}) catch unreachable
         else
-            std.fmt.bufPrint(&buf, "{d:.2}B", .{ops / 1_000_000_000}) catch unreachable;
+            std.fmt.bufPrint(&result.buf, "{d:.2}B", .{ops / 1_000_000_000}) catch unreachable;
 
-        var result: [64]u8 = undefined;
-        @memcpy(result[0..formatted.len], formatted);
+        result.len = formatted.len;
         return result;
     }
 };
@@ -411,6 +546,7 @@ pub const AsyncBenchmark = struct {
         return BenchmarkResult{
             .name = self.name,
             .samples = samples,
+            .allocator = allocator,
             .mean = mean_val,
             .stddev = stddev_val,
             .min = min_val,
@@ -427,6 +563,8 @@ pub const AsyncBenchmark = struct {
 pub const AsyncBenchmarkSuite = struct {
     benchmarks: std.ArrayList(AsyncBenchmark),
     allocator: Allocator,
+    filter: ?[]const u8 = null,
+    baseline_path: ?[]const u8 = null,
 
     pub fn init(allocator: Allocator) AsyncBenchmarkSuite {
         return .{
@@ -447,11 +585,40 @@ pub const AsyncBenchmarkSuite = struct {
         try self.benchmarks.append(self.allocator, AsyncBenchmark.withOptions(name, func, opts));
     }
 
-    pub fn run(self: *AsyncBenchmarkSuite) !void {
-        var stdout_buf: [8192]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
-        const stdout = &stdout_writer.interface;
+    pub fn setFilter(self: *AsyncBenchmarkSuite, filter: []const u8) void {
+        self.filter = filter;
+    }
 
+    pub fn setBaseline(self: *AsyncBenchmarkSuite, path: []const u8) void {
+        self.baseline_path = path;
+    }
+
+    fn matchesFilter(self: *const AsyncBenchmarkSuite, name: []const u8) bool {
+        if (self.filter == null) return true;
+        return std.mem.indexOf(u8, name, self.filter.?) != null;
+    }
+
+    pub fn saveBaseline(self: *AsyncBenchmarkSuite, results: []const BenchmarkResult, path: []const u8) !void {
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+
+        try file.writeAll("[\n");
+        for (results, 0..) |result, i| {
+            const json = try result.toJson(self.allocator);
+            defer self.allocator.free(json);
+            try file.writeAll("  ");
+            try file.writeAll(json);
+            if (i < results.len - 1) {
+                try file.writeAll(",\n");
+            } else {
+                try file.writeAll("\n");
+            }
+        }
+        try file.writeAll("]\n");
+    }
+
+    pub fn run(self: *AsyncBenchmarkSuite) !void {
+        const stdout = std.fs.File.stdout();
         const formatter = Formatter{};
 
         try formatter.printHeader(stdout);
@@ -465,12 +632,25 @@ pub const AsyncBenchmarkSuite = struct {
         }
 
         for (self.benchmarks.items) |*benchmark| {
+            if (!self.matchesFilter(benchmark.name)) {
+                continue;
+            }
+
             try formatter.printBenchmarkStart(stdout, benchmark.name);
             const result = try benchmark.run(self.allocator);
             try results.append(self.allocator, result);
             try formatter.printResult(stdout, &result);
         }
 
-        try formatter.printSummary(stdout, results.items);
+        if (results.items.len > 0) {
+            try formatter.printSummary(stdout, results.items);
+
+            if (self.baseline_path) |path| {
+                try self.saveBaseline(results.items, path);
+                var buf: [256]u8 = undefined;
+                const msg = try std.fmt.bufPrint(&buf, "\n{s}Baseline saved to: {s}{s}\n", .{ Formatter.DIM, path, Formatter.RESET });
+                try stdout.writeAll(msg);
+            }
+        }
     }
 };

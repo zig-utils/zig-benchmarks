@@ -9,6 +9,27 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/bench.zig"),
     });
 
+    // Create modules for advanced features
+    const export_module = b.createModule(.{
+        .root_source_file = b.path("src/export.zig"),
+    });
+    export_module.addImport("bench", bench_module);
+
+    const comparison_module = b.createModule(.{
+        .root_source_file = b.path("src/comparison.zig"),
+    });
+    comparison_module.addImport("bench", bench_module);
+
+    const memory_profiler_module = b.createModule(.{
+        .root_source_file = b.path("src/memory_profiler.zig"),
+    });
+
+    const ci_module = b.createModule(.{
+        .root_source_file = b.path("src/ci.zig"),
+    });
+    ci_module.addImport("bench", bench_module);
+    ci_module.addImport("comparison", comparison_module);
+
     // Example executables
     const examples = [_]struct {
         name: []const u8,
@@ -17,6 +38,9 @@ pub fn build(b: *std.Build) void {
         .{ .name = "basic", .path = "examples/basic.zig" },
         .{ .name = "async", .path = "examples/async.zig" },
         .{ .name = "custom_options", .path = "examples/custom_options.zig" },
+        .{ .name = "filtering_baseline", .path = "examples/filtering_baseline.zig" },
+        .{ .name = "allocators", .path = "examples/allocators.zig" },
+        .{ .name = "advanced_features", .path = "examples/advanced_features.zig" },
     };
 
     inline for (examples) |example| {
@@ -26,6 +50,14 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         exe_module.addImport("bench", bench_module);
+
+        // Add advanced feature imports for advanced_features example
+        if (std.mem.eql(u8, example.name, "advanced_features")) {
+            exe_module.addImport("export", export_module);
+            exe_module.addImport("comparison", comparison_module);
+            exe_module.addImport("memory_profiler", memory_profiler_module);
+            exe_module.addImport("ci", ci_module);
+        }
 
         const exe = b.addExecutable(.{
             .name = example.name,
@@ -57,6 +89,14 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         exe_module.addImport("bench", bench_module);
+
+        // Add advanced feature imports for advanced_features example
+        if (std.mem.eql(u8, example.name, "advanced_features")) {
+            exe_module.addImport("export", export_module);
+            exe_module.addImport("comparison", comparison_module);
+            exe_module.addImport("memory_profiler", memory_profiler_module);
+            exe_module.addImport("ci", ci_module);
+        }
 
         const exe = b.addExecutable(.{
             .name = example.name,
