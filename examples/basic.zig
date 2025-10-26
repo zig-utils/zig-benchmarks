@@ -1,6 +1,16 @@
+//! Basic Benchmark Example
+//!
+//! This example demonstrates:
+//! - Running multiple benchmarks in a suite
+//! - Automatic comparison between benchmarks
+//! - Benchmarking different complexity operations (Fibonacci, arrays, strings)
+//!
+//! Run with: zig build run-basic
+
 const std = @import("std");
 const bench = @import("bench");
 
+// Global variable to prevent compiler optimization
 var global_counter: u64 = 0;
 
 fn fibonacci(n: u32) u64 {

@@ -1,3 +1,13 @@
+//! Custom Options Example
+//!
+//! This example demonstrates:
+//! - Customizing warmup iterations
+//! - Setting min/max iterations
+//! - Configuring minimum benchmark time
+//! - Adapting settings for operations of different speeds
+//!
+//! Run with: zig build run-custom_options
+
 const std = @import("std");
 const bench = @import("bench");
 

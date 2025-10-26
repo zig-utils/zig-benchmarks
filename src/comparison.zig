@@ -29,7 +29,7 @@ pub const ComparisonResult = struct {
     is_regression: bool,
 
     /// Threshold percentage for regression detection (default: 10%)
-    regression_threshold: f64 = 10.0
+    regression_threshold: f64 = 10.0,
 
     pub fn format(self: ComparisonResult, allocator: Allocator) ![]u8 {
         var buf = std.ArrayList(u8){};

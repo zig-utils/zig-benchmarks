@@ -336,7 +336,7 @@ pub const BenchmarkSuite = struct {
         self.baseline_path = path;
     }
 
-    fn matchesFilter(self: *const BenchmarkSuite, name: []const u8) bool {
+    pub fn matchesFilter(self: *const BenchmarkSuite, name: []const u8) bool {
         if (self.filter == null) return true;
         // Simple substring match for now
         return std.mem.indexOf(u8, name, self.filter.?) != null;
@@ -740,3 +740,224 @@ pub const AsyncBenchmarkSuite = struct {
         }
     }
 };
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+test "Stats.mean - basic calculation" {
+    const samples = [_]u64{ 10, 20, 30, 40, 50 };
+    const result = Stats.mean(&samples);
+    try std.testing.expectApproxEqRel(30.0, result, 0.001);
+}
+
+test "Stats.mean - single value" {
+    const samples = [_]u64{42};
+    const result = Stats.mean(&samples);
+    try std.testing.expectApproxEqRel(42.0, result, 0.001);
+}
+
+test "Stats.mean - empty array" {
+    const samples = [_]u64{};
+    const result = Stats.mean(&samples);
+    try std.testing.expectApproxEqRel(0.0, result, 0.001);
+}
+
+test "Stats.mean - large values" {
+    const samples = [_]u64{ 1_000_000, 2_000_000, 3_000_000 };
+    const result = Stats.mean(&samples);
+    try std.testing.expectApproxEqRel(2_000_000.0, result, 0.001);
+}
+
+test "Stats.stddev - basic calculation" {
+    const samples = [_]u64{ 2, 4, 4, 4, 5, 5, 7, 9 };
+    const mean_val = Stats.mean(&samples);
+    const result = Stats.stddev(&samples, mean_val);
+    // Expected stddev ≈ 2.138
+    try std.testing.expect(result > 2.0 and result < 2.2);
+}
+
+test "Stats.stddev - identical values" {
+    const samples = [_]u64{ 100, 100, 100, 100 };
+    const mean_val = Stats.mean(&samples);
+    const result = Stats.stddev(&samples, mean_val);
+    try std.testing.expectApproxEqRel(0.0, result, 0.001);
+}
+
+test "Stats.stddev - two values" {
+    const samples = [_]u64{ 10, 20 };
+    const mean_val = Stats.mean(&samples);
+    const result = Stats.stddev(&samples, mean_val);
+    // stddev = sqrt((25 + 25) / 1) = sqrt(50) ≈ 7.071
+    try std.testing.expect(result > 7.0 and result < 7.1);
+}
+
+test "Stats.stddev - single value" {
+    const samples = [_]u64{42};
+    const mean_val = Stats.mean(&samples);
+    const result = Stats.stddev(&samples, mean_val);
+    try std.testing.expectApproxEqRel(0.0, result, 0.001);
+}
+
+test "Stats.percentile - median (P50)" {
+    var samples = [_]u64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    const result = Stats.percentile(&samples, 0.50);
+    try std.testing.expectEqual(@as(u64, 5), result);
+}
+
+test "Stats.percentile - P75" {
+    var samples = [_]u64{ 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+    const result = Stats.percentile(&samples, 0.75);
+    try std.testing.expect(result >= 70 and result <= 80);
+}
+
+test "Stats.percentile - P99" {
+    var samples = [_]u64{0} ** 100;
+    for (&samples, 0..) |*s, i| {
+        s.* = i + 1;
+    }
+    const result = Stats.percentile(&samples, 0.99);
+    try std.testing.expect(result >= 99 and result <= 100);
+}
+
+test "Stats.percentile - single value" {
+    var samples = [_]u64{42};
+    const result = Stats.percentile(&samples, 0.75);
+    try std.testing.expectEqual(@as(u64, 42), result);
+}
+
+test "Stats.percentile - empty array" {
+    var samples = [_]u64{};
+    const result = Stats.percentile(&samples, 0.50);
+    try std.testing.expectEqual(@as(u64, 0), result);
+}
+
+test "Stats.min - basic" {
+    const samples = [_]u64{ 50, 30, 70, 10, 90 };
+    const result = Stats.min(&samples);
+    try std.testing.expectEqual(@as(u64, 10), result);
+}
+
+test "Stats.min - single value" {
+    const samples = [_]u64{42};
+    const result = Stats.min(&samples);
+    try std.testing.expectEqual(@as(u64, 42), result);
+}
+
+test "Stats.min - all same values" {
+    const samples = [_]u64{ 100, 100, 100 };
+    const result = Stats.min(&samples);
+    try std.testing.expectEqual(@as(u64, 100), result);
+}
+
+test "Stats.min - empty array" {
+    const samples = [_]u64{};
+    const result = Stats.min(&samples);
+    try std.testing.expectEqual(@as(u64, 0), result);
+}
+
+test "Stats.max - basic" {
+    const samples = [_]u64{ 50, 30, 70, 10, 90 };
+    const result = Stats.max(&samples);
+    try std.testing.expectEqual(@as(u64, 90), result);
+}
+
+test "Stats.max - single value" {
+    const samples = [_]u64{42};
+    const result = Stats.max(&samples);
+    try std.testing.expectEqual(@as(u64, 42), result);
+}
+
+test "Stats.max - all same values" {
+    const samples = [_]u64{ 100, 100, 100 };
+    const result = Stats.max(&samples);
+    try std.testing.expectEqual(@as(u64, 100), result);
+}
+
+test "Stats.max - empty array" {
+    const samples = [_]u64{};
+    const result = Stats.max(&samples);
+    try std.testing.expectEqual(@as(u64, 0), result);
+}
+
+test "BenchmarkOptions - default values" {
+    const opts = BenchmarkOptions{};
+    try std.testing.expectEqual(@as(u32, 5), opts.warmup_iterations);
+    try std.testing.expectEqual(@as(u32, 10), opts.min_iterations);
+    try std.testing.expectEqual(@as(u32, 10_000), opts.max_iterations);
+    try std.testing.expectEqual(@as(u64, 1_000_000_000), opts.min_time_ns);
+}
+
+test "BenchmarkOptions - custom values" {
+    const opts = BenchmarkOptions{
+        .warmup_iterations = 10,
+        .min_iterations = 100,
+        .max_iterations = 1000,
+        .min_time_ns = 500_000_000,
+    };
+    try std.testing.expectEqual(@as(u32, 10), opts.warmup_iterations);
+    try std.testing.expectEqual(@as(u32, 100), opts.min_iterations);
+    try std.testing.expectEqual(@as(u32, 1000), opts.max_iterations);
+    try std.testing.expectEqual(@as(u64, 500_000_000), opts.min_time_ns);
+}
+
+test "Benchmark - init and basic properties" {
+    const TestFn = struct {
+        fn dummyBench() void {}
+    };
+
+    const benchmark = Benchmark.init("Test Benchmark", TestFn.dummyBench);
+    try std.testing.expectEqualStrings("Test Benchmark", benchmark.name);
+    try std.testing.expectEqual(@as(u32, 5), benchmark.opts.warmup_iterations);
+}
+
+test "Benchmark - withOptions" {
+    const TestFn = struct {
+        fn dummyBench() void {}
+    };
+
+    const opts = BenchmarkOptions{
+        .warmup_iterations = 20,
+        .min_iterations = 50,
+    };
+    const benchmark = Benchmark.withOptions("Test", TestFn.dummyBench, opts);
+    try std.testing.expectEqual(@as(u32, 20), benchmark.opts.warmup_iterations);
+    try std.testing.expectEqual(@as(u32, 50), benchmark.opts.min_iterations);
+}
+
+test "BenchmarkResult - deinit" {
+    const allocator = std.testing.allocator;
+
+    var samples = std.ArrayList(u64){};
+    try samples.append(allocator, 100);
+    try samples.append(allocator, 200);
+
+    var result = BenchmarkResult{
+        .name = "Test",
+        .samples = samples,
+        .allocator = allocator,
+        .mean = 150.0,
+        .stddev = 50.0,
+        .min = 100,
+        .max = 200,
+        .p50 = 150,
+        .p75 = 175,
+        .p99 = 199,
+        .ops_per_sec = 6_666_666.67,
+        .iterations = 2,
+    };
+
+    result.deinit();
+    // If we get here without leaking, the test passes
+}
+
+test "Formatter - color constants" {
+    try std.testing.expectEqualStrings("\x1b[0m", Formatter.RESET);
+    try std.testing.expectEqualStrings("\x1b[1m", Formatter.BOLD);
+    try std.testing.expectEqualStrings("\x1b[2m", Formatter.DIM);
+    try std.testing.expectEqualStrings("\x1b[36m", Formatter.CYAN);
+    try std.testing.expectEqualStrings("\x1b[32m", Formatter.GREEN);
+    try std.testing.expectEqualStrings("\x1b[33m", Formatter.YELLOW);
+    try std.testing.expectEqualStrings("\x1b[34m", Formatter.BLUE);
+    try std.testing.expectEqualStrings("\x1b[35m", Formatter.MAGENTA);
+}

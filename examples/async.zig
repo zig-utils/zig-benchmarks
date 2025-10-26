@@ -1,6 +1,16 @@
+//! Async Benchmark Example
+//!
+//! This example demonstrates:
+//! - Benchmarking functions that can return errors
+//! - Using AsyncBenchmarkSuite for error-handling functions
+//! - Measuring allocation-heavy operations
+//!
+//! Run with: zig build run-async
+
 const std = @import("std");
 const bench = @import("bench");
 
+// Global variable to prevent compiler optimization
 var global_result: []u8 = undefined;
 
 fn asyncFileOperation() !void {

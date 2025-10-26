@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benchmark Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f7fa;
+            color: #2c3e50;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { margin-bottom: 10px; font-size: 32px; color: #2c3e50; }
+        .subtitle { color: #7f8c8d; margin-bottom: 30px; }
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls label { margin-right: 10px; font-weight: 500; }
+        .controls input, .controls select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-right: 15px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .controls button:hover { background: #2980b9; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card h2 { margin-bottom: 15px; font-size: 18px; color: #34495e; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        th {
+            background: #ecf0f1;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        tr:hover { background: #f8f9fa; }
+        .metric { font-size: 14px; }
+        .metric-value {
+            font-size: 24px;
+            font-weight: 600;
+            color: #3498db;
+            margin-top: 5px;
+        }
+        .trend-up { color: #27ae60; }
+        .trend-down { color: #e74c3c; }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-warning { background: #fff3cd; color: #856404; }
+        .badge-danger { background: #f8d7da; color: #721c24; }
+        canvas { max-height: 300px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Benchmark Dashboard</h1>
+        <p class="subtitle">Monitor and analyze benchmark performance over time</p>
+
+        <div class="controls">
+            <label>Data Source:</label>
+            <input type="file" id="fileInput" accept=".json">
+            <label>or</label>
+            <input type="text" id="urlInput" placeholder="URL to benchmark_results.json">
+            <button onclick="loadData()">Load Data</button>
+            <button onclick="loadDemo()">Load Demo Data</button>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>📈 Performance Overview</h2>
+                <canvas id="performanceChart"></canvas>
+            </div>
+
+            <div class="card">
+                <h2>🎯 Summary Statistics</h2>
+                <div id="summaryStats"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📋 Detailed Results</h2>
+            <table id="resultsTable">
+                <thead>
+                    <tr>
+                        <th>Benchmark</th>
+                        <th>Mean</th>
+                        <th>Std Dev</th>
+                        <th>Min</th>
+                        <th>Max</th>
+                        <th>P99</th>
+                        <th>Ops/sec</th>
+                        <th>Iterations</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody"></tbody>
+            </table>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>📊 Distribution (P50/P75/P99)</h2>
+                <canvas id="percentileChart"></canvas>
+            </div>
+
+            <div class="card">
+                <h2>⚡ Operations per Second</h2>
+                <canvas id="opsChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentData = null;
+        let charts = {};
+
+        // Load data from file or URL
+        async function loadData() {
+            const fileInput = document.getElementById('fileInput');
+            const urlInput = document.getElementById('urlInput').value;
+
+            if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                const text = await file.text();
+                currentData = JSON.parse(text);
+                renderDashboard();
+            } else if (urlInput) {
+                try {
+                    const response = await fetch(urlInput);
+                    currentData = await response.json();
+                    renderDashboard();
+                } catch (e) {
+                    alert('Failed to load data: ' + e.message);
+                }
+            }
+        }
+
+        // Load demo data
+        function loadDemo() {
+            currentData = {
+                timestamp: Date.now() / 1000,
+                benchmarks: [
+                    {name: "Fast Operation", mean_ns: 150, stddev_ns: 25, min_ns: 100, max_ns: 300, p50_ns: 145, p75_ns: 165, p99_ns: 250, ops_per_sec: 6666666, iterations: 10000},
+                    {name: "Medium Operation", mean_ns: 1500, stddev_ns: 200, min_ns: 1200, max_ns: 2500, p50_ns: 1480, p75_ns: 1600, p99_ns: 2100, ops_per_sec: 666666, iterations: 5000},
+                    {name: "Slow Operation", mean_ns: 15000, stddev_ns: 2000, min_ns: 12000, max_ns: 25000, p50_ns: 14800, p75_ns: 16000, p99_ns: 21000, ops_per_sec: 66666, iterations: 1000},
+                    {name: "Algorithm A", mean_ns: 500, stddev_ns: 75, min_ns: 400, max_ns: 800, p50_ns: 490, p75_ns: 550, p99_ns: 750, ops_per_sec: 2000000, iterations: 8000},
+                    {name: "Algorithm B", mean_ns: 800, stddev_ns: 120, min_ns: 650, max_ns: 1200, p50_ns: 780, p75_ns: 900, p99_ns: 1100, ops_per_sec: 1250000, iterations: 7000}
+                ]
+            };
+            renderDashboard();
+        }
+
+        function renderDashboard() {
+            if (!currentData || !currentData.benchmarks) return;
+
+            renderSummaryStats();
+            renderTable();
+            renderPerformanceChart();
+            renderPercentileChart();
+            renderOpsChart();
+        }
+
+        function renderSummaryStats() {
+            const benchmarks = currentData.benchmarks;
+            const totalBenchmarks = benchmarks.length;
+            const avgMean = benchmarks.reduce((sum, b) => sum + b.mean_ns, 0) / totalBenchmarks;
+            const totalOps = benchmarks.reduce((sum, b) => sum + b.ops_per_sec, 0);
+            const fastest = benchmarks.reduce((min, b) => b.mean_ns < min.mean_ns ? b : min);
+
+            const html = `
+                <div class="metric">
+                    <div>Total Benchmarks</div>
+                    <div class="metric-value">${totalBenchmarks}</div>
+                </div>
+                <div class="metric" style="margin-top: 15px;">
+                    <div>Avg Mean Time</div>
+                    <div class="metric-value">${(avgMean / 1000).toFixed(2)} µs</div>
+                </div>
+                <div class="metric" style="margin-top: 15px;">
+                    <div>Total Ops/sec</div>
+                    <div class="metric-value">${totalOps.toFixed(0)}</div>
+                </div>
+                <div class="metric" style="margin-top: 15px;">
+                    <div>Fastest</div>
+                    <div class="metric-value" style="font-size: 16px;">${fastest.name}</div>
+                </div>
+            `;
+            document.getElementById('summaryStats').innerHTML = html;
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('resultsBody');
+            tbody.innerHTML = '';
+
+            currentData.benchmarks.forEach(b => {
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td><strong>${b.name}</strong></td>
+                    <td>${(b.mean_ns / 1000).toFixed(2)} µs</td>
+                    <td>${(b.stddev_ns / 1000).toFixed(2)} µs</td>
+                    <td>${(b.min_ns / 1000).toFixed(2)} µs</td>
+                    <td>${(b.max_ns / 1000).toFixed(2)} µs</td>
+                    <td>${(b.p99_ns / 1000).toFixed(2)} µs</td>
+                    <td>${b.ops_per_sec.toFixed(0)}</td>
+                    <td>${b.iterations}</td>
+                `;
+            });
+        }
+
+        function renderPerformanceChart() {
+            const ctx = document.getElementById('performanceChart');
+            if (charts.performance) charts.performance.destroy();
+
+            charts.performance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: currentData.benchmarks.map(b => b.name),
+                    datasets: [{
+                        label: 'Mean Time (µs)',
+                        data: currentData.benchmarks.map(b => b.mean_ns / 1000),
+                        backgroundColor: 'rgba(52, 152, 219, 0.6)',
+                        borderColor: 'rgba(52, 152, 219, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true, title: { display: true, text: 'Time (µs)' } } }
+                }
+            });
+        }
+
+        function renderPercentileChart() {
+            const ctx = document.getElementById('percentileChart');
+            if (charts.percentile) charts.percentile.destroy();
+
+            charts.percentile = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: currentData.benchmarks.map(b => b.name),
+                    datasets: [
+                        { label: 'P50', data: currentData.benchmarks.map(b => b.p50_ns / 1000), borderColor: '#2ecc71', fill: false },
+                        { label: 'P75', data: currentData.benchmarks.map(b => b.p75_ns / 1000), borderColor: '#f39c12', fill: false },
+                        { label: 'P99', data: currentData.benchmarks.map(b => b.p99_ns / 1000), borderColor: '#e74c3c', fill: false }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: { y: { beginAtZero: true, title: { display: true, text: 'Time (µs)' } } }
+                }
+            });
+        }
+
+        function renderOpsChart() {
+            const ctx = document.getElementById('opsChart');
+            if (charts.ops) charts.ops.destroy();
+
+            charts.ops = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: currentData.benchmarks.map(b => b.name),
+                    datasets: [{
+                        label: 'Ops/sec',
+                        data: currentData.benchmarks.map(b => b.ops_per_sec),
+                        backgroundColor: 'rgba(155, 89, 182, 0.6)',
+                        borderColor: 'rgba(155, 89, 182, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true, title: { display: true, text: 'Operations/second' } } }
+                }
+            });
+        }
+
+        // Auto-load if benchmark_results.json exists
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch('benchmark_results.json');
+                if (response.ok) {
+                    currentData = await response.json();
+                    renderDashboard();
+                }
+            } catch (e) {
+                console.log('No auto-loadable data found');
+            }
+        });
+    </script>
+</body>
+</html>

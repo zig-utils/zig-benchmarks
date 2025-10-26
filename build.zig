@@ -120,11 +120,34 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const tests = b.addTest(.{
+    const unit_tests = b.addTest(.{
         .root_module = test_module,
     });
 
-    const run_tests = b.addRunArtifact(tests);
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_tests.step);
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+
+    // Integration tests
+    const integration_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/integration_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    integration_test_module.addImport("bench", bench_module);
+
+    const integration_tests = b.addTest(.{
+        .root_module = integration_test_module,
+    });
+
+    const run_integration_tests = b.addRunArtifact(integration_tests);
+
+    // Test steps
+    const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_integration_tests.step);
+
+    const unit_test_step = b.step("test-unit", "Run unit tests only");
+    unit_test_step.dependOn(&run_unit_tests.step);
+
+    const integration_test_step = b.step("test-integration", "Run integration tests only");
+    integration_test_step.dependOn(&run_integration_tests.step);
 }

@@ -1,3 +1,15 @@
+//! Advanced Features Example
+//!
+//! This comprehensive example demonstrates ALL advanced features:
+//! 1. JSON/CSV Export - Export results to files
+//! 2. Baseline Comparison - Compare against saved baselines
+//! 3. Regression Detection - Automatic detection of performance regressions
+//! 4. Memory Profiling - Track allocations with ProfilingAllocator
+//! 5. CI/CD Integration - Platform-specific output and regression checks
+//! 6. Flamegraph Support - Generate profiling data and instructions
+//!
+//! Run with: zig build run-advanced_features
+
 const std = @import("std");
 const bench = @import("bench");
 

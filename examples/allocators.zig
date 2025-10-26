@@ -1,3 +1,13 @@
+//! Allocator Comparison Example
+//!
+//! This example demonstrates:
+//! - Benchmarking with custom allocators
+//! - Comparing PageAllocator, GeneralPurposeAllocator, and ArenaAllocator
+//! - Using addWithAllocator for allocation-heavy benchmarks
+//! - Performance characteristics of different allocators
+//!
+//! Run with: zig build run-allocators
+
 const std = @import("std");
 const bench = @import("bench");
 

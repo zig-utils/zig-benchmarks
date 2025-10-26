@@ -331,10 +331,16 @@ Summary
 git clone https://github.com/yourusername/zig-bench.git
 cd zig-bench
 
-# Run tests
+# Run all tests (unit + integration)
 zig build test
 
-# Build examples
+# Run only unit tests
+zig build test-unit
+
+# Run only integration tests
+zig build test-integration
+
+# Build all examples
 zig build examples
 
 # Run specific example
@@ -359,9 +365,9 @@ Inspired by [mitata](https://github.com/evanwashere/mitata), a beautiful JavaScr
 
 ## Advanced Features
 
-All advanced features are now implemented and available! See the `examples/advanced_features.zig` for a complete demonstration.
+Zig Bench now includes a comprehensive suite of advanced features for professional benchmarking!
 
-### ✅ Implemented Features
+### ✅ Core Advanced Features (Phase 1)
 
 - **JSON/CSV Export** - Export benchmark results to JSON or CSV format
 - **Historical Comparison** - Compare current results against saved baselines with regression detection
@@ -371,6 +377,17 @@ All advanced features are now implemented and available! See the `examples/advan
 - **Regression Detection** - Automatic detection of performance regressions with configurable thresholds
 - **Custom Allocator Benchmarking** - Built-in support for benchmarking with different allocators
 - **Benchmark Filtering** - Run specific benchmarks by name pattern
+
+### 🚀 Advanced Features (Phase 2)
+
+- **Benchmark Groups/Categories** - Organize benchmarks into logical groups
+- **Automatic Warmup Detection** - Intelligently determine optimal warmup iterations
+- **Statistical Outlier Detection** - Remove anomalies using IQR, Z-score, or MAD methods
+- **Parameterized Benchmarks** - Run benchmarks with different input parameters
+- **Multi-threaded Benchmarks** - Test parallel performance and scalability
+- **GitHub Actions Workflow** - Ready-to-use CI/CD workflow template
+- **GitLab CI Template** - Complete GitLab CI/CD configuration
+- **Web Dashboard** - Interactive HTML dashboard for visualizing results
 
 ### Export Results to JSON/CSV
 
@@ -522,3 +539,158 @@ Measurements use Zig's high-resolution timer which typically has nanosecond prec
 - Background processes
 
 Run multiple times and look for consistency in results.
+
+## Phase 2 Advanced Features
+
+### Benchmark Groups
+
+Organize related benchmarks into categories for better organization:
+
+```zig
+const groups = @import("groups");
+
+var manager = groups.GroupManager.init(allocator);
+defer manager.deinit();
+
+// Create groups
+var algorithms = try manager.addGroup("Algorithms");
+try algorithms.add("QuickSort", quicksortBench);
+try algorithms.add("MergeSort", mergesortBench);
+
+var io = try manager.addGroup("I/O Operations");
+try io.add("File Read", fileReadBench);
+try io.add("File Write", fileWriteBench);
+
+// Run all groups
+try manager.runAll();
+
+// Or run specific group
+try manager.runGroup("Algorithms");
+```
+
+### Automatic Warmup Detection
+
+Let the framework automatically determine optimal warmup iterations:
+
+```zig
+const warmup = @import("warmup");
+
+const detector = warmup.WarmupDetector.initDefault();
+const result = try detector.detect(myBenchFunc, allocator);
+
+std.debug.print("Optimal warmup: {d} iterations\n", .{result.optimal_iterations});
+std.debug.print("Stabilized: {}\n", .{result.stabilized});
+std.debug.print("CV: {d:.4}\n", .{result.final_cv});
+```
+
+### Outlier Detection and Removal
+
+Clean benchmark data by removing statistical outliers:
+
+```zig
+const outliers = @import("outliers");
+
+// Configure outlier detection
+const config = outliers.OutlierConfig{
+    .method = .iqr,  // or .zscore, .mad
+    .iqr_multiplier = 1.5,
+};
+
+const detector = outliers.OutlierDetector.init(config);
+var result = try detector.detectAndRemove(samples, allocator);
+defer result.deinit();
+
+std.debug.print("Removed {d} outliers ({d:.2}%)\n", .{
+    result.outlier_count,
+    result.outlier_percentage,
+});
+```
+
+### Parameterized Benchmarks
+
+Test performance across different input sizes:
+
+```zig
+const param = @import("parameterized");
+
+// Define sizes to test
+const sizes = [_]usize{ 10, 100, 1000, 10000 };
+
+// Create parameterized benchmark
+var suite = try param.sizeParameterized(
+    allocator,
+    "Array Sort",
+    arraySortBench,
+    &sizes,
+);
+defer suite.deinit();
+
+try suite.run();
+```
+
+### Multi-threaded Benchmarks
+
+Measure parallel performance and scalability:
+
+```zig
+const parallel = @import("parallel");
+
+// Single parallel benchmark
+const config = parallel.ParallelConfig{
+    .thread_count = 4,
+    .iterations_per_thread = 1000,
+};
+
+const pb = parallel.ParallelBenchmark.init(allocator, "Parallel Op", func, config);
+var result = try pb.run();
+defer result.deinit();
+
+try parallel.ParallelBenchmark.printResult(&result);
+
+// Scalability test across thread counts
+const thread_counts = [_]usize{ 1, 2, 4, 8 };
+const scalability = parallel.ScalabilityTest.init(
+    allocator,
+    "Scalability",
+    func,
+    &thread_counts,
+    1000,
+);
+try scalability.run();
+```
+
+### CI/CD Integration
+
+#### GitHub Actions
+
+Copy `.github/workflows/benchmarks.yml` to your repository for automatic benchmarking on every push/PR:
+
+- Runs benchmarks on multiple platforms
+- Compares against baseline
+- Posts results as PR comments
+- Uploads artifacts
+
+#### GitLab CI
+
+Copy `.gitlab-ci.yml` to your repository for GitLab CI integration:
+
+- Multi-stage pipeline (build, test, benchmark, report)
+- Automatic baseline comparison
+- GitLab Pages dashboard generation
+- Regression detection
+
+### Web Dashboard
+
+Open `web/dashboard.html` in a browser to visualize benchmark results:
+
+- Interactive charts and graphs
+- Load results from JSON files or URLs
+- Compare multiple benchmark runs
+- Export/share visualizations
+
+To use:
+1. Run benchmarks and generate `benchmark_results.json`
+2. Open `web/dashboard.html` in a browser
+3. Load the JSON file or use demo data
+4. Explore interactive visualizations
+

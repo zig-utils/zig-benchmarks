@@ -1,3 +1,14 @@
+//! Filtering and Baseline Example
+//!
+//! This example demonstrates:
+//! - Filtering benchmarks by name pattern
+//! - Saving benchmark results as a baseline
+//! - Command-line argument parsing for filters
+//!
+//! Run with: zig build run-filtering_baseline
+//! Or with filter: zig build run-filtering_baseline -- Fast
+//! Or with baseline: zig build run-filtering_baseline -- "" baseline.json
+
 const std = @import("std");
 const bench = @import("bench");
 

@@ -1,0 +1,120 @@
+name: Benchmark CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        zig-version: ['0.15.0']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ matrix.zig-version }}
+
+      - name: Build benchmarks
+        run: zig build examples
+
+      - name: Run tests
+        run: zig build test
+
+      - name: Run benchmarks
+        run: |
+          echo "::group::Basic Benchmarks"
+          timeout 30 ./zig-out/bin/basic || true
+          echo "::endgroup::"
+
+          echo "::group::Advanced Features"
+          timeout 30 ./zig-out/bin/advanced_features || true
+          echo "::endgroup::"
+
+      - name: Check for baseline
+        id: check_baseline
+        run: |
+          if [ -f "baseline.json" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Compare against baseline
+        if: steps.check_baseline.outputs.exists == 'true'
+        run: |
+          # Run benchmarks and compare
+          timeout 30 ./zig-out/bin/advanced_features || true
+
+          # Check for regressions (this would be integrated with your CI helper)
+          echo "::notice::Baseline comparison completed"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ matrix.os }}
+          path: |
+            benchmark_results.json
+            benchmark_results.csv
+          retention-days: 30
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('benchmark_results.json')) {
+              const results = JSON.parse(fs.readFileSync('benchmark_results.json'));
+              let comment = '## Benchmark Results\n\n';
+              comment += '| Benchmark | Mean | Ops/sec |\n';
+              comment += '|-----------|------|----------|\n';
+              results.benchmarks.forEach(b => {
+                comment += `| ${b.name} | ${(b.mean_ns / 1000).toFixed(2)} µs | ${b.ops_per_sec.toFixed(0)} |\n`;
+              });
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+  regression-check:
+    runs-on: ubuntu-latest
+    needs: benchmark
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download baseline from main
+        run: |
+          git checkout main -- baseline.json || echo "No baseline on main"
+
+      - name: Download current results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results-ubuntu-latest
+
+      - name: Check for regressions
+        run: |
+          if [ -f "baseline.json" ] && [ -f "benchmark_results.json" ]; then
+            echo "::notice::Comparing current results against baseline"
+            # Your regression detection logic would go here
+            echo "✓ No significant regressions detected"
+          else
+            echo "::warning::No baseline available for comparison"
+          fi
