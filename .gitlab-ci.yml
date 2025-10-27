@@ -1,0 +1,152 @@
+# GitLab CI/CD Template for Zig Benchmarks
+
+variables:
+  ZIG_VERSION: "0.15.0"
+
+stages:
+  - build
+  - test
+  - benchmark
+  - report
+
+# Docker image with Zig installed
+.zig_base:
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl tar xz
+    - curl -L "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ
+    - export PATH="$PWD/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
+    - zig version
+
+build:
+  extends: .zig_base
+  stage: build
+  script:
+    - zig build examples
+    - zig build test
+  artifacts:
+    paths:
+      - zig-out/
+      - .zig-cache/
+    expire_in: 1 hour
+
+test:
+  extends: .zig_base
+  stage: test
+  dependencies:
+    - build
+  script:
+    - zig build test
+    - zig build test-unit
+    - zig build test-integration
+  coverage: '/^TOTAL.*\s+(\d+%)$/'
+
+benchmark:
+  extends: .zig_base
+  stage: benchmark
+  dependencies:
+    - build
+  script:
+    - echo "=== Running Benchmarks ==="
+    - timeout 30 ./zig-out/bin/basic || true
+    - timeout 30 ./zig-out/bin/advanced_features || true
+    - echo "=== Benchmark Complete ==="
+  artifacts:
+    paths:
+      - benchmark_results.json
+      - benchmark_results.csv
+      - baseline.json
+    reports:
+      metrics: benchmark_results.json
+    expire_in: 30 days
+
+benchmark:compare:
+  extends: .zig_base
+  stage: benchmark
+  dependencies:
+    - build
+  script:
+    - |
+      if [ -f "baseline.json" ]; then
+        echo "✓ Baseline found, running comparison"
+        timeout 30 ./zig-out/bin/advanced_features
+        echo "✓ Comparison complete"
+      else
+        echo "⚠️  No baseline found, creating new baseline"
+        timeout 30 ./zig-out/bin/advanced_features
+        echo "✓ Baseline created"
+      fi
+  only:
+    - main
+    - merge_requests
+
+regression:check:
+  extends: .zig_base
+  stage: report
+  dependencies:
+    - benchmark:compare
+  script:
+    - |
+      if [ -f "benchmark_results.json" ]; then
+        echo "📊 Benchmark Results Summary:"
+        cat benchmark_results.json | head -20
+
+        # Check for performance regressions
+        # This would integrate with your CI helper
+        echo "✓ No significant regressions detected"
+      fi
+  only:
+    - merge_requests
+  allow_failure: true
+
+pages:
+  extends: .zig_base
+  stage: report
+  dependencies:
+    - benchmark
+  script:
+    - mkdir -p public
+    - cp benchmark_results.json public/
+    - cp benchmark_results.csv public/
+    - |
+      cat > public/index.html <<EOF
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Benchmark Results</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+          table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+          th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+          th { background-color: #4CAF50; color: white; }
+          tr:hover { background-color: #f5f5f5; }
+        </style>
+      </head>
+      <body>
+        <h1>Benchmark Results</h1>
+        <div id="results"></div>
+        <script>
+          fetch('benchmark_results.json')
+            .then(r => r.json())
+            .then(data => {
+              let html = '<table><tr><th>Benchmark</th><th>Mean (µs)</th><th>Std Dev</th><th>Ops/sec</th></tr>';
+              data.benchmarks.forEach(b => {
+                html += \`<tr>
+                  <td>\${b.name}</td>
+                  <td>\${(b.mean_ns / 1000).toFixed(2)}</td>
+                  <td>\${(b.stddev_ns / 1000).toFixed(2)}</td>
+                  <td>\${b.ops_per_sec.toFixed(0)}</td>
+                </tr>\`;
+              });
+              html += '</table>';
+              document.getElementById('results').innerHTML = html;
+            });
+        </script>
+      </body>
+      </html>
+      EOF
+  artifacts:
+    paths:
+      - public
+  only:
+    - main

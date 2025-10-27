@@ -95,7 +95,7 @@ pub const WarmupDetector = struct {
     }
 
     /// Check if the recent samples show stability
-    fn checkStability(self: *const WarmupDetector, samples: []const u64, allocator: std.mem.Allocator) !bool {
+    fn checkStability(self: *const WarmupDetector, samples: []const u64, _: std.mem.Allocator) !bool {
         if (samples.len < self.config.stability_window) return false;
 
         // Get the last stability_window samples

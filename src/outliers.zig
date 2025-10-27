@@ -95,7 +95,7 @@ pub const OutlierDetector = struct {
     /// IQR (Interquartile Range) method
     fn detectIQR(self: *const OutlierDetector, samples: []const u64, allocator: Allocator) !OutlierResult {
         // Sort samples to calculate quartiles
-        var sorted = try allocator.dupe(u64, samples);
+        const sorted = try allocator.dupe(u64, samples);
         defer allocator.free(sorted);
         std.mem.sort(u64, sorted, {}, std.sort.asc(u64));
 
@@ -135,7 +135,7 @@ pub const OutlierDetector = struct {
 
     /// MAD (Median Absolute Deviation) method
     fn detectMAD(self: *const OutlierDetector, samples: []const u64, allocator: Allocator) !OutlierResult {
-        var sorted = try allocator.dupe(u64, samples);
+        const sorted = try allocator.dupe(u64, samples);
         defer allocator.free(sorted);
 
         const median = bench.Stats.percentile(sorted, 0.50);

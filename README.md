@@ -264,7 +264,8 @@ The `examples/` directory contains several complete examples:
 - `custom_options.zig` - Customizing benchmark parameters
 - `filtering_baseline.zig` - Benchmark filtering and baseline saving
 - `allocators.zig` - Comparing different allocator performance
-- `advanced_features.zig` - Complete demonstration of all advanced features
+- `advanced_features.zig` - Complete demonstration of all Phase 1 advanced features
+- `phase2_features.zig` - Complete demonstration of all Phase 2 advanced features (groups, warmup, outliers, parameterized, parallel)
 
 Run examples:
 
@@ -279,6 +280,7 @@ zig build run-custom_options
 zig build run-filtering_baseline
 zig build run-allocators
 zig build run-advanced_features
+zig build run-phase2_features
 ```
 
 ## Output Format
@@ -365,29 +367,38 @@ Inspired by [mitata](https://github.com/evanwashere/mitata), a beautiful JavaScr
 
 ## Advanced Features
 
-Zig Bench now includes a comprehensive suite of advanced features for professional benchmarking!
+Zig Bench includes a comprehensive suite of advanced features for professional benchmarking.
 
-### ✅ Core Advanced Features (Phase 1)
+### Organization & Workflow
 
-- **JSON/CSV Export** - Export benchmark results to JSON or CSV format
-- **Historical Comparison** - Compare current results against saved baselines with regression detection
-- **Memory Profiling** - Track memory allocations, peak usage, and allocation counts
-- **Flamegraph Support** - Generate flamegraph-compatible folded stack format and profiler instructions
-- **CI/CD Integration** - Built-in helpers for GitHub Actions, GitLab CI, and generic CI systems
-- **Regression Detection** - Automatic detection of performance regressions with configurable thresholds
-- **Custom Allocator Benchmarking** - Built-in support for benchmarking with different allocators
+- **Benchmark Groups/Categories** - Organize related benchmarks into logical groups
 - **Benchmark Filtering** - Run specific benchmarks by name pattern
+- **Parameterized Benchmarks** - Test performance across different input sizes or parameters
 
-### 🚀 Advanced Features (Phase 2)
+### Performance Analysis
 
-- **Benchmark Groups/Categories** - Organize benchmarks into logical groups
 - **Automatic Warmup Detection** - Intelligently determine optimal warmup iterations
 - **Statistical Outlier Detection** - Remove anomalies using IQR, Z-score, or MAD methods
-- **Parameterized Benchmarks** - Run benchmarks with different input parameters
-- **Multi-threaded Benchmarks** - Test parallel performance and scalability
-- **GitHub Actions Workflow** - Ready-to-use CI/CD workflow template
-- **GitLab CI Template** - Complete GitLab CI/CD configuration
+- **Memory Profiling** - Track memory allocations, peak usage, and allocation counts
+- **Multi-threaded Benchmarks** - Test parallel performance and thread scalability
+
+### Comparison & Regression Detection
+
+- **Historical Baseline Comparison** - Compare current results against saved baselines
+- **Regression Detection** - Automatic detection of performance regressions with configurable thresholds
+- **Custom Allocator Benchmarking** - Compare performance across different allocators
+
+### Export & Visualization
+
+- **JSON/CSV Export** - Export benchmark results to standard formats
+- **Flamegraph Support** - Generate flamegraph-compatible output for profiling tools
 - **Web Dashboard** - Interactive HTML dashboard for visualizing results
+
+### CI/CD Integration
+
+- **GitHub Actions Workflow** - Ready-to-use workflow with PR comments and artifact uploads
+- **GitLab CI Template** - Complete pipeline with Pages dashboard generation
+- **CI/CD Helpers** - Built-in support for GitHub Actions, GitLab CI, and generic CI systems
 
 ### Export Results to JSON/CSV
 

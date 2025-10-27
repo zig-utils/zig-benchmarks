@@ -90,15 +90,15 @@ pub fn ParameterizedBenchmark(comptime T: type) type {
         fn formatParameterName(self: *const Self, param: T) ![]u8 {
             var buf: [128]u8 = undefined;
             const formatted = switch (@typeInfo(T)) {
-                .Int => try std.fmt.bufPrint(&buf, "{d}", .{param}),
-                .Float => try std.fmt.bufPrint(&buf, "{d:.2}", .{param}),
-                .Pointer => |ptr_info| {
+                .int => try std.fmt.bufPrint(&buf, "{d}", .{param}),
+                .float => try std.fmt.bufPrint(&buf, "{d:.2}", .{param}),
+                .pointer => |ptr_info| blk: {
                     if (ptr_info.child == u8) {
                         // String parameter
                         const str: []const u8 = @ptrCast(param);
-                        try std.fmt.bufPrint(&buf, "{s}", .{str})
+                        break :blk try std.fmt.bufPrint(&buf, "{s}", .{str});
                     } else {
-                        try std.fmt.bufPrint(&buf, "ptr", .{})
+                        break :blk try std.fmt.bufPrint(&buf, "ptr", .{});
                     }
                 },
                 else => try std.fmt.bufPrint(&buf, "param", .{}),

@@ -74,7 +74,7 @@ pub const ParallelBenchmark = struct {
 
     /// Run the benchmark in parallel
     pub fn run(self: *const ParallelBenchmark) !ParallelResult {
-        var threads = try self.allocator.alloc(Thread, self.config.thread_count);
+        const threads = try self.allocator.alloc(Thread, self.config.thread_count);
         defer self.allocator.free(threads);
 
         var contexts = try self.allocator.alloc(ThreadContext, self.config.thread_count);
