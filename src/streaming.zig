@@ -76,10 +76,10 @@ pub const FileStreamer = struct {
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const temp_alloc = fba.allocator();
 
-        var string = std.ArrayList(u8).init(temp_alloc);
-        defer string.deinit();
+        var string = std.ArrayList(u8){};
+        defer string.deinit(temp_alloc);
 
-        const writer = string.writer();
+        const writer = string.writer(temp_alloc);
         try writer.writeAll("{");
         try writer.print("\"event_type\":\"{s}\",", .{@tagName(event.event_type)});
         try writer.print("\"timestamp\":{d}", .{event.timestamp});
@@ -136,10 +136,10 @@ pub const SSEStreamer = struct {
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const temp_alloc = fba.allocator();
 
-        var data = std.ArrayList(u8).init(temp_alloc);
-        defer data.deinit();
+        var data = std.ArrayList(u8){};
+        defer data.deinit(temp_alloc);
 
-        const writer = data.writer();
+        const writer = data.writer(temp_alloc);
         try writer.print("event: {s}\n", .{@tagName(event.event_type)});
         try writer.writeAll("data: {");
         try writer.print("\"timestamp\":{d}", .{event.timestamp});
@@ -167,8 +167,8 @@ pub const StreamingSuite = struct {
     pub fn init(allocator: Allocator) StreamingSuite {
         return .{
             .suite = bench.BenchmarkSuite.init(allocator),
-            .streamers = std.ArrayList(*FileStreamer).init(allocator),
-            .callbacks = std.ArrayList(StreamCallback).init(allocator),
+            .streamers = std.ArrayList(*FileStreamer){},
+            .callbacks = std.ArrayList(StreamCallback){},
             .allocator = allocator,
         };
     }
@@ -178,8 +178,8 @@ pub const StreamingSuite = struct {
             streamer.deinit();
             self.allocator.destroy(streamer);
         }
-        self.streamers.deinit();
-        self.callbacks.deinit();
+        self.streamers.deinit(self.allocator);
+        self.callbacks.deinit(self.allocator);
         self.suite.deinit();
     }
 
@@ -187,12 +187,12 @@ pub const StreamingSuite = struct {
     pub fn addFileStreamer(self: *StreamingSuite, path: []const u8, format: StreamFormat) !void {
         const streamer = try self.allocator.create(FileStreamer);
         streamer.* = try FileStreamer.init(self.allocator, path, format);
-        try self.streamers.append(streamer);
+        try self.streamers.append(self.allocator, streamer);
     }
 
     /// Add a callback
     pub fn addCallback(self: *StreamingSuite, callback: StreamCallback) !void {
-        try self.callbacks.append(callback);
+        try self.callbacks.append(self.allocator, callback);
     }
 
     /// Add benchmark to suite

@@ -92,7 +92,7 @@ pub const ABTest = struct {
 
     /// Run the A/B test
     pub fn run(self: *const ABTest) !ABTestResult {
-        var prng = std.rand.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
+        var prng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
         const random = prng.random();
 
         // Determine execution order
@@ -111,13 +111,10 @@ pub const ABTest = struct {
         const result_b = if (run_a_first)
             try self.runVariant(.b)
         else
-            blk: {
-                _ = result_a;
-                break :blk try self.runVariant(.b);
-            };
+            try self.runVariant(.b);
 
         // Calculate statistics
-        const percent_diff = ((result_a.mean_ns - result_b.mean_ns) / result_a.mean_ns) * 100.0;
+        const percent_diff = ((result_a.mean - result_b.mean) / result_a.mean) * 100.0;
 
         // Simplified t-test (assumes normal distribution)
         const t_stat = try self.calculateTStatistic(result_a, result_b);
@@ -128,13 +125,13 @@ pub const ABTest = struct {
         const ci = try self.calculateConfidenceInterval(result_a, result_b);
 
         // Calculate effect size (Cohen's d)
-        const pooled_std = @sqrt((result_a.stddev_ns * result_a.stddev_ns + result_b.stddev_ns * result_b.stddev_ns) / 2.0);
-        const effect_size = (result_a.mean_ns - result_b.mean_ns) / pooled_std;
+        const pooled_std = @sqrt((result_a.stddev * result_a.stddev + result_b.stddev * result_b.stddev) / 2.0);
+        const effect_size = (result_a.mean - result_b.mean) / pooled_std;
 
         // Determine winner
         const winner = if (!is_significant)
             null
-        else if (result_b.mean_ns < result_a.mean_ns)
+        else if (result_b.mean < result_a.mean)
             Variant.b
         else
             Variant.a;
@@ -157,19 +154,16 @@ pub const ABTest = struct {
             .b => self.variant_b,
         };
 
-        const benchmark = bench.Benchmark.init(self.name, func, .{
-            .iterations = self.config.iterations,
-            .warmup_iterations = self.config.warmup_iterations,
-        });
+        const benchmark = bench.Benchmark.init(self.name, func);
 
         return try benchmark.run(self.allocator);
     }
 
     fn calculateTStatistic(self: *const ABTest, a: bench.BenchmarkResult, b: bench.BenchmarkResult) !f64 {
         _ = self;
-        const mean_diff = a.mean_ns - b.mean_ns;
-        const n = @as(f64, @floatFromInt(a.iterations));
-        const se = @sqrt((a.stddev_ns * a.stddev_ns + b.stddev_ns * b.stddev_ns) / n);
+        const mean_diff = a.mean - b.mean;
+        const n = @as(f64, @floatFromInt(a.samples.items.len));
+        const se = @sqrt((a.stddev * a.stddev + b.stddev * b.stddev) / n);
 
         if (se == 0.0) return 0.0;
         return mean_diff / se;
@@ -188,17 +182,19 @@ pub const ABTest = struct {
     }
 
     fn calculateConfidenceInterval(self: *const ABTest, a: bench.BenchmarkResult, b: bench.BenchmarkResult) ![2]f64 {
-        const mean_diff = a.mean_ns - b.mean_ns;
-        const n = @as(f64, @floatFromInt(a.iterations));
-        const se = @sqrt((a.stddev_ns * a.stddev_ns + b.stddev_ns * b.stddev_ns) / n);
+        const mean_diff = a.mean - b.mean;
+        const n = @as(f64, @floatFromInt(a.samples.items.len));
+        const se = @sqrt((a.stddev * a.stddev + b.stddev * b.stddev) / n);
 
         // Z-score for 95% confidence
-        const z = switch (self.config.confidence_level) {
-            0.90 => 1.645,
-            0.95 => 1.96,
-            0.99 => 2.576,
-            else => 1.96,
-        };
+        const z: f64 = if (self.config.confidence_level >= 0.99)
+            2.576
+        else if (self.config.confidence_level >= 0.95)
+            1.96
+        else if (self.config.confidence_level >= 0.90)
+            1.645
+        else
+            1.96;
 
         const margin = z * se;
         return .{ mean_diff - margin, mean_diff + margin };
@@ -224,12 +220,12 @@ pub const ABTest = struct {
 
         const a_mean = try std.fmt.bufPrint(&buf, "  Mean: {s}{d:.2} ns{s}\n", .{
             bench.Formatter.GREEN,
-            result.variant_a.mean_ns,
+            result.variant_a.mean,
             bench.Formatter.RESET,
         });
         try stdout.writeAll(a_mean);
 
-        const a_std = try std.fmt.bufPrint(&buf, "  Std Dev: {d:.2} ns\n", .{result.variant_a.stddev_ns});
+        const a_std = try std.fmt.bufPrint(&buf, "  Std Dev: {d:.2} ns\n", .{result.variant_a.stddev});
         try stdout.writeAll(a_std);
 
         // Variant B
@@ -241,12 +237,12 @@ pub const ABTest = struct {
 
         const b_mean = try std.fmt.bufPrint(&buf, "  Mean: {s}{d:.2} ns{s}\n", .{
             bench.Formatter.GREEN,
-            result.variant_b.mean_ns,
+            result.variant_b.mean,
             bench.Formatter.RESET,
         });
         try stdout.writeAll(b_mean);
 
-        const b_std = try std.fmt.bufPrint(&buf, "  Std Dev: {d:.2} ns\n", .{result.variant_b.stddev_ns});
+        const b_std = try std.fmt.bufPrint(&buf, "  Std Dev: {d:.2} ns\n", .{result.variant_b.stddev});
         try stdout.writeAll(b_std);
 
         // Analysis
@@ -257,7 +253,7 @@ pub const ABTest = struct {
         try stdout.writeAll(analysis_header);
 
         const diff_line = try std.fmt.bufPrint(&buf, "  Difference: {s}{d:.2}%{s}\n", .{
-            if (result.percent_difference > 0) bench.Formatter.GREEN else bench.Formatter.RED,
+            if (result.percent_difference > 0) bench.Formatter.GREEN else bench.Formatter.YELLOW,
             result.percent_difference,
             bench.Formatter.RESET,
         });

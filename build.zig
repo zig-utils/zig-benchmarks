@@ -60,6 +60,37 @@ pub fn build(b: *std.Build) void {
     });
     parallel_module.addImport("bench", bench_module);
 
+    // Advanced Features - Phase 3 modules
+    const streaming_module = b.createModule(.{
+        .root_source_file = b.path("src/streaming.zig"),
+    });
+    streaming_module.addImport("bench", bench_module);
+
+    const ab_testing_module = b.createModule(.{
+        .root_source_file = b.path("src/ab_testing.zig"),
+    });
+    ab_testing_module.addImport("bench", bench_module);
+
+    const diff_module = b.createModule(.{
+        .root_source_file = b.path("src/diff.zig"),
+    });
+    diff_module.addImport("bench", bench_module);
+
+    const monitoring_module = b.createModule(.{
+        .root_source_file = b.path("src/monitoring.zig"),
+    });
+    monitoring_module.addImport("bench", bench_module);
+
+    const exporters_module = b.createModule(.{
+        .root_source_file = b.path("src/exporters.zig"),
+    });
+    exporters_module.addImport("bench", bench_module);
+
+    const profiling_module = b.createModule(.{
+        .root_source_file = b.path("src/profiling.zig"),
+    });
+    profiling_module.addImport("bench", bench_module);
+
     // Example executables
     const examples = [_]struct {
         name: []const u8,
@@ -72,6 +103,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "allocators", .path = "examples/allocators.zig" },
         .{ .name = "advanced_features", .path = "examples/advanced_features.zig" },
         .{ .name = "phase2_features", .path = "examples/phase2_features.zig" },
+        .{ .name = "phase3_features", .path = "examples/phase3_features.zig" },
     };
 
     inline for (examples) |example| {
@@ -98,6 +130,16 @@ pub fn build(b: *std.Build) void {
             exe_module.addImport("outliers", outliers_module);
             exe_module.addImport("parameterized", parameterized_module);
             exe_module.addImport("parallel", parallel_module);
+        }
+
+        // Add Phase 3 feature imports for phase3_features example
+        if (std.mem.eql(u8, example.name, "phase3_features")) {
+            exe_module.addImport("streaming", streaming_module);
+            exe_module.addImport("ab_testing", ab_testing_module);
+            exe_module.addImport("diff", diff_module);
+            exe_module.addImport("monitoring", monitoring_module);
+            exe_module.addImport("exporters", exporters_module);
+            exe_module.addImport("profiling", profiling_module);
         }
 
         const exe = b.addExecutable(.{
@@ -147,6 +189,16 @@ pub fn build(b: *std.Build) void {
             exe_module.addImport("outliers", outliers_module);
             exe_module.addImport("parameterized", parameterized_module);
             exe_module.addImport("parallel", parallel_module);
+        }
+
+        // Add Phase 3 feature imports for phase3_features example
+        if (std.mem.eql(u8, example.name, "phase3_features")) {
+            exe_module.addImport("streaming", streaming_module);
+            exe_module.addImport("ab_testing", ab_testing_module);
+            exe_module.addImport("diff", diff_module);
+            exe_module.addImport("monitoring", monitoring_module);
+            exe_module.addImport("exporters", exporters_module);
+            exe_module.addImport("profiling", profiling_module);
         }
 
         const exe = b.addExecutable(.{

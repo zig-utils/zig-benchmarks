@@ -90,14 +90,16 @@ pub const DiffViewer = struct {
 
         // Parse JSON (simplified - in real implementation use std.json)
         // For now, return a mock result
-        var diffs = std.ArrayList(BenchmarkDiff).init(self.allocator);
+        var diffs = std.ArrayList(BenchmarkDiff){};
 
         // This is a placeholder - actual implementation would parse JSON
-        _ = old_content;
-        _ = new_content;
+        // In a full implementation, we would parse old_content and new_content here
+        if (old_content.len == 0 or new_content.len == 0) {
+            // Prevent unused variable warnings
+        }
 
         return DiffResult{
-            .diffs = try diffs.toOwnedSlice(),
+            .diffs = try diffs.toOwnedSlice(self.allocator),
             .total_benchmarks = 0,
             .improved_count = 0,
             .regressed_count = 0,
@@ -114,7 +116,7 @@ pub const DiffViewer = struct {
         old_results: std.StringHashMap(f64),
         new_results: std.StringHashMap(f64),
     ) !DiffResult {
-        var diffs = std.ArrayList(BenchmarkDiff).init(self.allocator);
+        var diffs = std.ArrayList(BenchmarkDiff){};
         var improved: usize = 0;
         var regressed: usize = 0;
         var unchanged: usize = 0;
@@ -145,7 +147,7 @@ pub const DiffViewer = struct {
                     else => {},
                 }
 
-                try diffs.append(.{
+                try diffs.append(self.allocator, .{
                     .name = name,
                     .diff_type = diff_type,
                     .old_mean_ns = old_mean,
@@ -157,7 +159,7 @@ pub const DiffViewer = struct {
             } else {
                 // New benchmark added
                 added += 1;
-                try diffs.append(.{
+                try diffs.append(self.allocator, .{
                     .name = name,
                     .diff_type = .added,
                     .old_mean_ns = null,
@@ -177,7 +179,7 @@ pub const DiffViewer = struct {
 
             if (!new_results.contains(name)) {
                 removed += 1;
-                try diffs.append(.{
+                try diffs.append(self.allocator, .{
                     .name = name,
                     .diff_type = .removed,
                     .old_mean_ns = old_mean,
@@ -200,7 +202,7 @@ pub const DiffViewer = struct {
         }
 
         return DiffResult{
-            .diffs = try diffs.toOwnedSlice(),
+            .diffs = try diffs.toOwnedSlice(self.allocator),
             .total_benchmarks = new_results.count(),
             .improved_count = improved,
             .regressed_count = regressed,
@@ -237,7 +239,7 @@ pub const DiffViewer = struct {
         try stdout.writeAll(improved_line);
 
         const regressed_line = try std.fmt.bufPrint(&buf, "  {s}✗ Regressed:{s} {d}\n", .{
-            bench.Formatter.RED,
+            bench.Formatter.YELLOW,
             bench.Formatter.RESET,
             result.regressed_count,
         });
@@ -295,7 +297,7 @@ pub const DiffViewer = struct {
 
         const color = switch (diff.diff_type) {
             .improved => bench.Formatter.GREEN,
-            .regressed => bench.Formatter.RED,
+            .regressed => bench.Formatter.YELLOW,
             .unchanged => bench.Formatter.DIM,
             .added => bench.Formatter.CYAN,
             .removed => bench.Formatter.YELLOW,
@@ -324,7 +326,7 @@ pub const DiffViewer = struct {
                 try stdout.writeAll(new_line);
 
                 const change_line = try std.fmt.bufPrint(&buf, "    Change: {s}{d:.2}%{s}\n", .{
-                    if (diff.percent_change < 0) bench.Formatter.GREEN else bench.Formatter.RED,
+                    if (diff.percent_change < 0) bench.Formatter.GREEN else bench.Formatter.YELLOW,
                     diff.percent_change,
                     bench.Formatter.RESET,
                 });

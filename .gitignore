@@ -4,3 +4,7 @@ baseline.json
 benchmark.folded
 benchmark_results.csv
 benchmark_results.json
+benchmark_metrics.prom
+benchmark_results.*
+benchmark_trace.json
+grafana_dashboard.json
