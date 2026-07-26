@@ -357,6 +357,16 @@ zig build run-basic
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Community
+
+For help, discussion about best practices, or any other conversation that would benefit from being searchable:
+
+[Discussions on GitHub](https://github.com/zig-utils/zig-benchmarks/discussions)
+
+For casual chit-chat with others using this package:
+
+[Join the Stacks Discord Server](https://stacksjs.com/discord)
+
 ## License
 
 MIT License - see LICENSE file for details
