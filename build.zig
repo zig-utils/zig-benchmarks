@@ -91,6 +91,11 @@ pub fn build(b: *std.Build) void {
     });
     profiling_module.addImport("bench", bench_module);
 
+    // External-process benchmarking: run a command and sample its RSS, PSS and dirty memory.
+    const process_module = b.addModule("process", .{
+        .root_source_file = b.path("src/process.zig"),
+    });
+
     // Example executables
     const examples = [_]struct {
         name: []const u8,
@@ -104,6 +109,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "advanced_features", .path = "examples/advanced_features.zig" },
         .{ .name = "phase2_features", .path = "examples/phase2_features.zig" },
         .{ .name = "phase3_features", .path = "examples/phase3_features.zig" },
+        .{ .name = "procbench", .path = "examples/procbench.zig" },
     };
 
     inline for (examples) |example| {
@@ -140,6 +146,10 @@ pub fn build(b: *std.Build) void {
             exe_module.addImport("monitoring", monitoring_module);
             exe_module.addImport("exporters", exporters_module);
             exe_module.addImport("profiling", profiling_module);
+        }
+
+        if (std.mem.eql(u8, example.name, "procbench")) {
+            exe_module.addImport("process", process_module);
         }
 
         const exe = b.addExecutable(.{
@@ -199,6 +209,10 @@ pub fn build(b: *std.Build) void {
             exe_module.addImport("profiling", profiling_module);
         }
 
+        if (std.mem.eql(u8, example.name, "procbench")) {
+            exe_module.addImport("process", process_module);
+        }
+
         const exe = b.addExecutable(.{
             .name = example.name,
             .root_module = exe_module,
@@ -243,6 +257,7 @@ pub fn build(b: *std.Build) void {
         flamegraph_module,    groups_module,     warmup_module,          outliers_module,
         parameterized_module, parallel_module,   streaming_module,       ab_testing_module,
         diff_module,          monitoring_module, exporters_module,       profiling_module,
+        process_module,
     }) |module| {
         // Library modules carry no target, so test a copy that has one and the same imports.
         const test_mod = b.createModule(.{
@@ -256,6 +271,30 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = test_mod })).step);
     }
     test_step.dependOn(&run_integration_tests.step);
+
+    // Process tests run a helper child and check what the sampler saw.
+    const process_child = b.addExecutable(.{
+        .name = "process_child",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/process_child.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const process_test_options = b.addOptions();
+    process_test_options.addOptionPath("child_path", process_child.getEmittedBin());
+    const process_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/process_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    process_test_module.addImport("process", process_module);
+    process_test_module.addOptions("process_test_options", process_test_options);
+    const run_process_tests = b.addRunArtifact(b.addTest(.{ .root_module = process_test_module }));
+    test_step.dependOn(&run_process_tests.step);
+
+    const process_test_step = b.step("test-process", "Run the external-process benchmark tests");
+    process_test_step.dependOn(&run_process_tests.step);
 
     const unit_test_step = b.step("test-unit", "Run unit tests only");
     unit_test_step.dependOn(&run_unit_tests.step);

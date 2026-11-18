@@ -483,6 +483,45 @@ const stats = profiling_allocator.getStats();
 //                 current_allocated, allocation_count, free_count
 ```
 
+The profiling allocator only counts bytes that pass through a Zig `Allocator`. To see what
+the operating system charges a program for, including mmapped data, use the process mode.
+
+### External-Process Benchmarks (RSS, PSS, private dirty)
+
+The `process` module runs a command, optionally drives it (stdin bytes, a stdin file, or a
+Unix socket request), samples its memory at a configurable rate (10 Hz by default) and reports
+peak, median and the time series, plus wall time, CPU time and page faults.
+
+```zig
+const process = @import("process");
+
+var result = try process.run(allocator, init.io, .{
+    .argv = &.{ "./zig-out/bin/scanner", "--db", "sigs.db" },
+    .driver = .{ .stdin_file = "corpus.tar" },
+    .sample_hz = 20,
+});
+defer result.deinit();
+
+try result.writeJson(stdout); // summaries plus every sample
+// Gate on dirty memory: file-backed pages one process maps show as private clean.
+try result.enforce(&.{.{ .metric = .private_dirty, .max_bytes = 256 * 1024 * 1024 }}, stdout);
+```
+
+Sources: Linux reads `/proc/<pid>/smaps_rollup` (`rss`, `pss`, `private_clean`,
+`private_dirty`, `shared_clean`, `shared_dirty`, `anonymous`, `swap_pss`). macOS reads
+`proc_pid_rusage`: `phys_footprint`, `rss`, `private_dirty` (the footprint, dirty plus
+compressed memory) and `private_clean` (resident memory the footprint does not cover); PSS and
+the shared split are not available there, and a gate on an unsampled metric fails rather than
+passing. The child's own children are not included. `run` needs an `Io` with `concurrent`
+support, such as `std.Io.Threaded`.
+
+The `procbench` example is a command-line front end:
+
+```sh
+zig build procbench
+./zig-out/bin/procbench --hz 20 --json result.json --max-dirty-mib 256 -- ./scanner sigs.db
+```
+
 ### CI/CD Integration
 
 ```zig
