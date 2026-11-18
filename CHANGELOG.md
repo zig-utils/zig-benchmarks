@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.1 - 2026-11-17
+
+- fix: export the library modules so packages can depend on zig-bench (10e9bc1)
+
 ## v0.2.0 - 2026-11-17
 
 - ci: pin Zig 0.17.0-dev.1857 in CI and deps.yaml (2c20e2e)
