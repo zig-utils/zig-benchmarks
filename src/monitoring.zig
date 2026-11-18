@@ -86,7 +86,7 @@ pub const PrometheusExporter = struct {
         }
 
         // Write mean
-        const mean_metric = try std.fmt.bufPrint(&buf, "{s}_duration_nanoseconds{{antml:{s}}} {d}\n", .{
+        const mean_metric = try std.fmt.bufPrint(&buf, "{s}_duration_nanoseconds{{{s}}} {d}\n", .{
             self.namespace,
             labels_str.items,
             result.mean,
@@ -122,7 +122,7 @@ pub const PrometheusExporter = struct {
         const ops_type = try std.fmt.bufPrint(&buf, "# TYPE {s}_ops_per_second gauge\n", .{self.namespace});
         try w.writeAll(ops_type);
 
-        const ops_metric = try std.fmt.bufPrint(&buf, "{s}_ops_per_second{{antml:{s}}} {d:.2}\n", .{
+        const ops_metric = try std.fmt.bufPrint(&buf, "{s}_ops_per_second{{{s}}} {d:.2}\n", .{
             self.namespace,
             labels_str.items,
             result.ops_per_sec,
@@ -322,3 +322,28 @@ pub const TimeSeriesCollector = struct {
         try w.flush();
     }
 };
+
+test "PrometheusExporter writes valid label sets" {
+    var exporter = PrometheusExporter.init(std.testing.allocator, std.testing.io, "bench");
+    defer exporter.deinit();
+    const result = bench.BenchmarkResult{
+        .name = "parse",
+        .samples = .empty,
+        .allocator = std.testing.allocator,
+        .mean = 10,
+        .stddev = 1,
+        .min = 9,
+        .max = 12,
+        .p50 = 10,
+        .p75 = 11,
+        .p99 = 12,
+        .ops_per_sec = 100,
+        .iterations = 1,
+    };
+    var out: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try exporter.writeMetric(&out.writer, result);
+    const text = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, text, "bench_duration_nanoseconds{benchmark=\"parse\"} 10\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "bench_ops_per_second{benchmark=\"parse\"} 100.00\n") != null);
+}

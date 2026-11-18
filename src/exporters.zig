@@ -138,8 +138,9 @@ pub const MarkdownExporter = struct {
             try w.writeAll("graph LR\n");
             for (results, 0..) |result, i| {
                 var buf: [256]u8 = undefined;
+                var id_buf: [128]u8 = undefined;
                 const node = try std.fmt.bufPrint(&buf, "  {s}[{s}: {d:.2} ns]\n", .{
-                    try self.sanitizeName(result.name),
+                    sanitizeName(&id_buf, result.name),
                     result.name,
                     result.mean,
                 });
@@ -179,20 +180,14 @@ pub const MarkdownExporter = struct {
         try w.writeAll(ops);
     }
 
-    fn sanitizeName(self: *MarkdownExporter, name: []const u8) ![]const u8 {
-        _ = self;
-        var buf: [128]u8 = undefined;
-        var i: usize = 0;
-        for (name) |c| {
-            if (std.ascii.isAlphanumeric(c) or c == '_') {
-                buf[i] = c;
-                i += 1;
-            } else {
-                buf[i] = '_';
-                i += 1;
-            }
+    /// Mermaid node id for a benchmark name: alphanumerics and underscores, written into `out` and
+    /// truncated to its length. The result borrows `out`, so the caller owns the storage.
+    fn sanitizeName(out: []u8, name: []const u8) []const u8 {
+        const len = @min(out.len, name.len);
+        for (name[0..len], out[0..len]) |c, *dest| {
+            dest.* = if (std.ascii.isAlphanumeric(c) or c == '_') c else '_';
         }
-        return buf[0..i];
+        return out[0..len];
     }
 };
 
@@ -413,3 +408,9 @@ pub const YAMLExporter = struct {
         try w.flush();
     }
 };
+
+test "MarkdownExporter.sanitizeName stays inside the caller's buffer" {
+    var out: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("a_b_c", MarkdownExporter.sanitizeName(&out, "a-b c"));
+    try std.testing.expectEqualStrings("abcdefgh", MarkdownExporter.sanitizeName(&out, "abcdefghijk"));
+}
