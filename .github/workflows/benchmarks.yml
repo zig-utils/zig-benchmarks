@@ -7,22 +7,29 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  # One pinned toolchain; build.zig.zon's minimum_zig_version names the same build.
+  ZIG_VERSION: '0.17.0-dev.1857+3c46da14d'
+
 jobs:
   benchmark:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        zig-version: ['0.15.0']
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
+        uses: mlugg/setup-zig@v2
         with:
-          version: ${{ matrix.zig-version }}
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Format
+        run: zig fmt --check .
 
       - name: Build benchmarks
         run: zig build examples
@@ -96,7 +103,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 

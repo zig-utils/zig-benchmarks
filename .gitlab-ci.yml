@@ -1,7 +1,7 @@
 # GitLab CI/CD Template for Zig Benchmarks
 
 variables:
-  ZIG_VERSION: "0.15.0"
+  ZIG_VERSION: "0.17.0-dev.1857+3c46da14d"
 
 stages:
   - build
@@ -14,8 +14,8 @@ stages:
   image: alpine:latest
   before_script:
     - apk add --no-cache curl tar xz
-    - curl -L "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ
-    - export PATH="$PWD/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
+    - curl -fL "https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" | tar -xJ
+    - export PATH="$PWD/zig-x86_64-linux-${ZIG_VERSION}:$PATH"
     - zig version
 
 build:
