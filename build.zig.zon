@@ -1,8 +1,8 @@
 .{
     .name = .zig_bench,
     .version = "0.1.1",
-    .minimum_zig_version = "0.15.0",
-    .fingerprint = 0xa1b2c3d4e5f60001,
+    .minimum_zig_version = "0.17.0-dev.1857",
+    .fingerprint = 0x5f133a04fb8c8016,
     .dependencies = .{},
     .paths = .{
         "README.md",
