@@ -23,17 +23,8 @@ take an `io: std.Io`, which a 0.17 `main` receives from `std.process.Init`.
 
 Add to your `build.zig.zon`:
 
-```zig
-.{
-    .name = "my-project",
-    .version = "0.1.0",
-    .dependencies = .{
-        .bench = .{
-            .url = "https://github.com/yourusername/zig-bench/archive/main.tar.gz",
-            .hash = "...",
-        },
-    },
-}
+```sh
+zig fetch --save=bench https://registry.pantry.dev/zig/packages/zig-bench/0.2.1/tarball
 ```
 
 Then in your `build.zig`:
@@ -46,6 +37,9 @@ const bench = b.dependency("bench", .{
 
 exe.root_module.addImport("bench", bench.module("bench"));
 ```
+
+Every feature module is exported under its file name: `bench`, `exporters`, `monitoring`,
+`comparison`, `ci`, `groups`, `parallel`, `profiling` and the rest.
 
 ### Manual Installation
 

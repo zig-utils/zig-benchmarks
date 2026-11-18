@@ -4,89 +4,89 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Create a module for the benchmark library
-    const bench_module = b.createModule(.{
+    // Public modules: dependents import them by these names (`bench`, `exporters`, ...).
+    const bench_module = b.addModule("bench", .{
         .root_source_file = b.path("src/bench.zig"),
     });
 
     // Create modules for advanced features
-    const export_module = b.createModule(.{
+    const export_module = b.addModule("export", .{
         .root_source_file = b.path("src/export.zig"),
     });
     export_module.addImport("bench", bench_module);
 
-    const comparison_module = b.createModule(.{
+    const comparison_module = b.addModule("comparison", .{
         .root_source_file = b.path("src/comparison.zig"),
     });
     comparison_module.addImport("bench", bench_module);
 
-    const memory_profiler_module = b.createModule(.{
+    const memory_profiler_module = b.addModule("memory_profiler", .{
         .root_source_file = b.path("src/memory_profiler.zig"),
     });
 
-    const ci_module = b.createModule(.{
+    const ci_module = b.addModule("ci", .{
         .root_source_file = b.path("src/ci.zig"),
     });
     ci_module.addImport("bench", bench_module);
     ci_module.addImport("comparison", comparison_module);
 
-    const flamegraph_module = b.createModule(.{
+    const flamegraph_module = b.addModule("flamegraph", .{
         .root_source_file = b.path("src/flamegraph.zig"),
     });
 
     // Advanced Features - Phase 2 modules
-    const groups_module = b.createModule(.{
+    const groups_module = b.addModule("groups", .{
         .root_source_file = b.path("src/groups.zig"),
     });
     groups_module.addImport("bench", bench_module);
 
-    const warmup_module = b.createModule(.{
+    const warmup_module = b.addModule("warmup", .{
         .root_source_file = b.path("src/warmup.zig"),
     });
     warmup_module.addImport("bench", bench_module);
 
-    const outliers_module = b.createModule(.{
+    const outliers_module = b.addModule("outliers", .{
         .root_source_file = b.path("src/outliers.zig"),
     });
     outliers_module.addImport("bench", bench_module);
 
-    const parameterized_module = b.createModule(.{
+    const parameterized_module = b.addModule("parameterized", .{
         .root_source_file = b.path("src/parameterized.zig"),
     });
     parameterized_module.addImport("bench", bench_module);
 
-    const parallel_module = b.createModule(.{
+    const parallel_module = b.addModule("parallel", .{
         .root_source_file = b.path("src/parallel.zig"),
     });
     parallel_module.addImport("bench", bench_module);
 
     // Advanced Features - Phase 3 modules
-    const streaming_module = b.createModule(.{
+    const streaming_module = b.addModule("streaming", .{
         .root_source_file = b.path("src/streaming.zig"),
     });
     streaming_module.addImport("bench", bench_module);
 
-    const ab_testing_module = b.createModule(.{
+    const ab_testing_module = b.addModule("ab_testing", .{
         .root_source_file = b.path("src/ab_testing.zig"),
     });
     ab_testing_module.addImport("bench", bench_module);
 
-    const diff_module = b.createModule(.{
+    const diff_module = b.addModule("diff", .{
         .root_source_file = b.path("src/diff.zig"),
     });
     diff_module.addImport("bench", bench_module);
 
-    const monitoring_module = b.createModule(.{
+    const monitoring_module = b.addModule("monitoring", .{
         .root_source_file = b.path("src/monitoring.zig"),
     });
     monitoring_module.addImport("bench", bench_module);
 
-    const exporters_module = b.createModule(.{
+    const exporters_module = b.addModule("exporters", .{
         .root_source_file = b.path("src/exporters.zig"),
     });
     exporters_module.addImport("bench", bench_module);
 
-    const profiling_module = b.createModule(.{
+    const profiling_module = b.addModule("profiling", .{
         .root_source_file = b.path("src/profiling.zig"),
     });
     profiling_module.addImport("bench", bench_module);
