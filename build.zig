@@ -235,9 +235,26 @@ pub fn build(b: *std.Build) void {
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
 
-    // Test steps
+    // Test steps: bench.zig, the integration tests, and every other module's own tests.
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
+    for ([_]*std.Build.Module{
+        export_module,        comparison_module, memory_profiler_module, ci_module,
+        flamegraph_module,    groups_module,     warmup_module,          outliers_module,
+        parameterized_module, parallel_module,   streaming_module,       ab_testing_module,
+        diff_module,          monitoring_module, exporters_module,       profiling_module,
+    }) |module| {
+        // Library modules carry no target, so test a copy that has one and the same imports.
+        const test_mod = b.createModule(.{
+            .root_source_file = module.root_source_file,
+            .target = target,
+            .optimize = optimize,
+        });
+        for (module.import_table.keys(), module.import_table.values()) |import_name, imported| {
+            test_mod.addImport(import_name, imported);
+        }
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = test_mod })).step);
+    }
     test_step.dependOn(&run_integration_tests.step);
 
     const unit_test_step = b.step("test-unit", "Run unit tests only");
