@@ -52,6 +52,9 @@ test "mmapping and reading a 64 MiB file reports it as clean, not dirty" {
         while (written < 64 * mib) : (written += chunk.len) {
             try file.writePositionalAll(io, &chunk, written);
         }
+        // Write the pages back: a page still dirty in the page cache is counted as
+        // dirty by smaps even when the reader never writes to it.
+        try file.sync(io);
     }
 
     var path_buf: [128]u8 = undefined;
