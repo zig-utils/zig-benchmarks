@@ -4,7 +4,7 @@ A modern, performant, and beautiful benchmark framework for Zig, inspired by [mi
 
 ## Features
 
-- **High Precision Timing** - Uses Zig's built-in high-resolution timer for accurate measurements
+- **High Precision Timing** - Uses the monotonic `std.Io` clock for accurate measurements
 - **Statistical Analysis** - Calculates mean, standard deviation, min/max, and percentiles (P50, P75, P99)
 - **Beautiful CLI Output** - Colorized output with clear formatting
 - **Flexible Configuration** - Customize warmup iterations, min/max iterations, and minimum time
@@ -14,6 +14,10 @@ A modern, performant, and beautiful benchmark framework for Zig, inspired by [mi
 - **Comparative Analysis** - Automatically identifies and highlights the fastest benchmark
 
 ## Installation
+
+Requires **Zig 0.17.0-dev.1857 or later**. Clocks, stdout and file output go
+through `std.Io`, so the entry points (`BenchmarkSuite.init`, exporters, ...)
+take an `io: std.Io`, which a 0.17 `main` receives from `std.process.Init`.
 
 ### Using Zig Package Manager
 
@@ -74,10 +78,10 @@ fn benchmarkLoop() void {
     global_sum = sum;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, init.io);
     defer suite.deinit();
 
     try suite.add("Loop 1000 times", benchmarkLoop);
@@ -110,10 +114,10 @@ fn benchFib30() void {
     result = fibonacci(30);
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, init.io);
     defer suite.deinit();
 
     try suite.add("Fibonacci(20)", benchFib20);
@@ -140,10 +144,10 @@ fn slowOperation() void {
     }
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, init.io);
     defer suite.deinit();
 
     try suite.addWithOptions("Slow Operation", slowOperation, .{
@@ -164,12 +168,10 @@ Benchmark functions that return errors:
 ```zig
 const std = @import("std");
 const bench = @import("bench");
-const async_bench = bench.async_bench;
-
 var result: []u8 = undefined;
 
 fn asyncOperation() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -180,10 +182,10 @@ fn asyncOperation() !void {
     result = buffer;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
-    var suite = async_bench.AsyncBenchmarkSuite.init(allocator);
+    var suite = bench.AsyncBenchmarkSuite.init(allocator, init.io);
     defer suite.deinit();
 
     try suite.add("Async Buffer Allocation", asyncOperation);
@@ -199,12 +201,38 @@ The main interface for running multiple benchmarks.
 
 ```zig
 pub const BenchmarkSuite = struct {
-    pub fn init(allocator: Allocator) BenchmarkSuite
+    pub fn init(allocator: Allocator, io: std.Io) BenchmarkSuite
     pub fn deinit(self: *BenchmarkSuite) void
     pub fn add(self: *BenchmarkSuite, name: []const u8, func: *const fn () void) !void
     pub fn addWithOptions(self: *BenchmarkSuite, name: []const u8, func: *const fn () void, opts: BenchmarkOptions) !void
     pub fn run(self: *BenchmarkSuite) !void
 };
+```
+
+### Benchmark (single run)
+
+```zig
+pub const Benchmark = struct {
+    pub fn init(name: []const u8, func: *const fn () void) Benchmark
+    pub fn run(self: *const Benchmark, allocator: Allocator, io: std.Io) !BenchmarkResult
+};
+
+// One-off convenience wrappers
+pub fn bench(io: std.Io, name: []const u8, func: *const fn () void) !void
+pub fn benchWithOptions(io: std.Io, name: []const u8, func: *const fn () void, opts: BenchmarkOptions) !void
+```
+
+### Timer
+
+`bench.Timer` (from `src/clock.zig`) replaces the removed `std.time.Timer`:
+
+```zig
+var timer = bench.Timer.start(io); // monotonic `.awake` clock
+const elapsed_ns = timer.read();
+const lap_ns = timer.lap(); // read and restart
+timer.reset();
+
+const now_ms = bench.clock.milliTimestamp(io); // wall clock
 ```
 
 ### BenchmarkOptions
@@ -247,7 +275,7 @@ For benchmarking functions that can return errors.
 
 ```zig
 pub const AsyncBenchmarkSuite = struct {
-    pub fn init(allocator: Allocator) AsyncBenchmarkSuite
+    pub fn init(allocator: Allocator, io: std.Io) AsyncBenchmarkSuite
     pub fn deinit(self: *AsyncBenchmarkSuite) void
     pub fn add(self: *AsyncBenchmarkSuite, name: []const u8, func: *const fn () anyerror!void) !void
     pub fn addWithOptions(self: *AsyncBenchmarkSuite, name: []const u8, func: *const fn () anyerror!void, opts: BenchmarkOptions) !void
@@ -320,7 +348,7 @@ Summary
 
 ## Performance Considerations
 
-- Uses Zig's `std.time.Timer` for high-resolution timing
+- Uses the monotonic `std.Io` clock (`bench.Timer`) for high-resolution timing
 - Minimal overhead - the framework itself adds negligible time
 - No heap allocations in the hot benchmark loop
 - Efficient statistical calculations
@@ -351,7 +379,7 @@ zig build run-basic
 
 ## Requirements
 
-- Zig 0.15.0 or later
+- Zig 0.17.0-dev.1857 or later
 
 ## Contributing
 
@@ -415,7 +443,7 @@ Zig Bench includes a comprehensive suite of advanced features for professional b
 ```zig
 const export_mod = @import("export");
 
-const exporter = export_mod.Exporter.init(allocator);
+const exporter = export_mod.Exporter.init(allocator, io);
 
 // Export to JSON
 try exporter.exportToFile(results, "benchmark_results.json", .json);
@@ -430,14 +458,17 @@ try exporter.exportToFile(results, "benchmark_results.csv", .csv);
 const comparison_mod = @import("comparison");
 
 // Create comparator with 10% regression threshold
-const comparator = comparison_mod.Comparator.init(allocator, 10.0);
+const comparator = comparison_mod.Comparator.init(allocator, io, 10.0);
 
 // Compare current results against baseline
 const comparisons = try comparator.compare(results, "baseline.json");
 defer allocator.free(comparisons);
 
-// Print comparison report
-try comparator.printComparison(stdout, comparisons);
+// Print comparison report to any *std.Io.Writer
+var stdout_buf: [4096]u8 = undefined;
+var stdout_writer = std.Io.File.stdout().writerStreaming(io, &stdout_buf);
+try comparator.printComparison(&stdout_writer.interface, comparisons);
+try stdout_writer.interface.flush();
 ```
 
 ### Memory Profiling
@@ -463,11 +494,11 @@ const stats = profiling_allocator.getStats();
 ```zig
 const ci = @import("ci");
 
-// Detect CI environment automatically
-const ci_format = ci.detectCIEnvironment();
+// Detect CI environment automatically (environ_map comes from std.process.Init)
+const ci_format = ci.detectCIEnvironment(init.environ_map);
 
 // Create CI helper with configuration
-var ci_helper = ci.CIHelper.init(allocator, .{
+var ci_helper = ci.CIHelper.init(allocator, io, .{
     .fail_on_regression = true,
     .regression_threshold = 10.0,
     .baseline_path = "baseline.json",
@@ -489,13 +520,13 @@ if (has_regression and ci_helper.shouldFailBuild(has_regression)) {
 ```zig
 const flamegraph_mod = @import("flamegraph");
 
-const flamegraph_gen = flamegraph_mod.FlamegraphGenerator.init(allocator);
+const flamegraph_gen = flamegraph_mod.FlamegraphGenerator.init(allocator, io);
 
 // Generate folded stack format for flamegraph.pl
 try flamegraph_gen.generateFoldedStacks("benchmark.folded", "MyBenchmark", 10000);
 
-// Generate profiler instructions
-try flamegraph_gen.generateInstructions(stdout, "my_executable");
+// Generate profiler instructions (writes to any *std.Io.Writer)
+try flamegraph_gen.generateInstructions(&stdout_writer.interface, "my_executable");
 
 // Detect available profilers
 const recommended = flamegraph_mod.ProfilerIntegration.recommendProfiler();
@@ -504,7 +535,7 @@ const recommended = flamegraph_mod.ProfilerIntegration.recommendProfiler();
 ### Benchmark Filtering
 
 ```zig
-var suite = bench.BenchmarkSuite.init(allocator);
+var suite = bench.BenchmarkSuite.init(allocator, io);
 defer suite.deinit();
 
 try suite.add("Fast Operation", fastOp);
@@ -520,7 +551,7 @@ try suite.run(); // Only runs "Fast Operation" and "Fast Algorithm"
 ### Custom Allocator Benchmarking
 
 ```zig
-var suite = bench.BenchmarkSuite.init(allocator);
+var suite = bench.BenchmarkSuite.init(allocator, io);
 defer suite.deinit();
 
 // Benchmark with custom allocator
@@ -570,7 +601,7 @@ Organize related benchmarks into categories for better organization:
 ```zig
 const groups = @import("groups");
 
-var manager = groups.GroupManager.init(allocator);
+var manager = groups.GroupManager.init(allocator, io);
 defer manager.deinit();
 
 // Create groups
@@ -578,9 +609,9 @@ var algorithms = try manager.addGroup("Algorithms");
 try algorithms.add("QuickSort", quicksortBench);
 try algorithms.add("MergeSort", mergesortBench);
 
-var io = try manager.addGroup("I/O Operations");
-try io.add("File Read", fileReadBench);
-try io.add("File Write", fileWriteBench);
+var io_group = try manager.addGroup("I/O Operations");
+try io_group.add("File Read", fileReadBench);
+try io_group.add("File Write", fileWriteBench);
 
 // Run all groups
 try manager.runAll();
@@ -597,7 +628,7 @@ Let the framework automatically determine optimal warmup iterations:
 const warmup = @import("warmup");
 
 const detector = warmup.WarmupDetector.initDefault();
-const result = try detector.detect(myBenchFunc, allocator);
+const result = try detector.detect(myBenchFunc, allocator, io);
 
 std.debug.print("Optimal warmup: {d} iterations\n", .{result.optimal_iterations});
 std.debug.print("Stabilized: {}\n", .{result.stabilized});
@@ -640,6 +671,7 @@ const sizes = [_]usize{ 10, 100, 1000, 10000 };
 // Create parameterized benchmark
 var suite = try param.sizeParameterized(
     allocator,
+    io,
     "Array Sort",
     arraySortBench,
     &sizes,
@@ -662,16 +694,17 @@ const config = parallel.ParallelConfig{
     .iterations_per_thread = 1000,
 };
 
-const pb = parallel.ParallelBenchmark.init(allocator, "Parallel Op", func, config);
+const pb = parallel.ParallelBenchmark.init(allocator, io, "Parallel Op", func, config);
 var result = try pb.run();
 defer result.deinit();
 
-try parallel.ParallelBenchmark.printResult(&result);
+try parallel.ParallelBenchmark.printResult(io, &result);
 
 // Scalability test across thread counts
 const thread_counts = [_]usize{ 1, 2, 4, 8 };
 const scalability = parallel.ScalabilityTest.init(
     allocator,
+    io,
     "Scalability",
     func,
     &thread_counts,
