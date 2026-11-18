@@ -51,12 +51,15 @@ fn slowBenchmark() void {
     std.mem.doNotOptimizeAway(&sum);
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const stdout = std.fs.File.stdout();
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
+    const stdout = &stdout_writer.interface;
     var buf: [512]u8 = undefined;
 
     const header = try std.fmt.bufPrint(&buf, "\n{s}=== Phase 3 Advanced Features Demo ==={s}\n\n", .{
@@ -82,6 +85,7 @@ pub fn main() !void {
 
     const ab_test = ab_testing.ABTest.init(
         allocator,
+        io,
         "Implementation Comparison",
         implementationA,
         implementationB,
@@ -89,7 +93,7 @@ pub fn main() !void {
     );
 
     const ab_result = try ab_test.run();
-    try ab_testing.ABTest.printResults(&ab_result);
+    try ab_testing.ABTest.printResults(io, &ab_result);
 
     // 2. Benchmark Diff Viewer
     const section2 = try std.fmt.bufPrint(&buf, "\n{s}[2] Benchmark Diff Viewer{s}\n", .{
@@ -118,11 +122,11 @@ pub fn main() !void {
         .sort_by_change = true,
     };
 
-    var diff_viewer = diff.DiffViewer.init(allocator, diff_config);
+    var diff_viewer = diff.DiffViewer.init(allocator, io, diff_config);
     var diff_result = try diff_viewer.compare(old_results, new_results);
     defer diff_result.deinit();
 
-    try diff.DiffViewer.printDiff(&diff_result);
+    try diff.DiffViewer.printDiff(io, &diff_result);
 
     // 3. Custom Exporters
     const section3 = try std.fmt.bufPrint(&buf, "\n{s}[3] Custom Result Exporters{s}\n", .{
@@ -132,7 +136,7 @@ pub fn main() !void {
     try stdout.writeAll(section3);
 
     // Run some benchmarks to get real results
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, io);
     defer suite.deinit();
 
     try suite.add("Fast Benchmark", fastBenchmark);
@@ -141,8 +145,8 @@ pub fn main() !void {
     try suite.run();
 
     // Get results for export (simplified - in real implementation would get from suite)
-    const samples1 = std.ArrayList(u64){};
-    const samples2 = std.ArrayList(u64){};
+    const samples1 = std.ArrayList(u64).empty;
+    const samples2 = std.ArrayList(u64).empty;
 
     const benchmark_results = [_]bench.BenchmarkResult{
         .{
@@ -176,7 +180,7 @@ pub fn main() !void {
     };
 
     // XML Export
-    var xml_exporter = exporters.XMLExporter.init(allocator);
+    var xml_exporter = exporters.XMLExporter.init(allocator, io);
     try xml_exporter.exportResults(&benchmark_results, "benchmark_results.xml");
     const xml_line = try std.fmt.bufPrint(&buf, "  {s}✓{s} Exported to XML: benchmark_results.xml\n", .{
         bench.Formatter.GREEN,
@@ -185,7 +189,7 @@ pub fn main() !void {
     try stdout.writeAll(xml_line);
 
     // Markdown Export
-    var md_exporter = exporters.MarkdownExporter.init(allocator, false);
+    var md_exporter = exporters.MarkdownExporter.init(allocator, io, false);
     try md_exporter.exportResults(&benchmark_results, "benchmark_results.md");
     const md_line = try std.fmt.bufPrint(&buf, "  {s}✓{s} Exported to Markdown: benchmark_results.md\n", .{
         bench.Formatter.GREEN,
@@ -194,7 +198,7 @@ pub fn main() !void {
     try stdout.writeAll(md_line);
 
     // HTML Export
-    var html_exporter = exporters.HTMLExporter.init(allocator, "Benchmark Results", true);
+    var html_exporter = exporters.HTMLExporter.init(allocator, io, "Benchmark Results", true);
     try html_exporter.exportResults(&benchmark_results, "benchmark_results.html");
     const html_line = try std.fmt.bufPrint(&buf, "  {s}✓{s} Exported to HTML: benchmark_results.html\n", .{
         bench.Formatter.GREEN,
@@ -203,7 +207,7 @@ pub fn main() !void {
     try stdout.writeAll(html_line);
 
     // YAML Export
-    var yaml_exporter = exporters.YAMLExporter.init(allocator);
+    var yaml_exporter = exporters.YAMLExporter.init(allocator, io);
     try yaml_exporter.exportResults(&benchmark_results, "benchmark_results.yaml");
     const yaml_line = try std.fmt.bufPrint(&buf, "  {s}✓{s} Exported to YAML: benchmark_results.yaml\n", .{
         bench.Formatter.GREEN,
@@ -218,7 +222,7 @@ pub fn main() !void {
     });
     try stdout.writeAll(section4);
 
-    var prom_exporter = monitoring.PrometheusExporter.init(allocator, "benchmark");
+    var prom_exporter = monitoring.PrometheusExporter.init(allocator, io, "benchmark");
     defer prom_exporter.deinit();
 
     try prom_exporter.addLabel("environment", "test");
@@ -232,7 +236,7 @@ pub fn main() !void {
     try stdout.writeAll(prom_line);
 
     // Generate Grafana dashboard
-    var dashboard = try monitoring.GrafanaDashboard.createDefaultDashboard(allocator, "benchmark");
+    var dashboard = try monitoring.GrafanaDashboard.createDefaultDashboard(allocator, io, "benchmark");
     defer dashboard.deinit();
 
     try dashboard.generateJSON("grafana_dashboard.json");
@@ -251,6 +255,7 @@ pub fn main() !void {
 
     const prof_bench = profiling.ProfilingBenchmark.init(
         allocator,
+        io,
         "Fast Benchmark",
         fastBenchmark,
         100,

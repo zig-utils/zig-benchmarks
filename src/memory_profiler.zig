@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// Statistics about memory usage during a benchmark
 pub const MemoryStats = struct {
@@ -155,18 +156,18 @@ pub const MemoryBenchmarkResult = struct {
     time_ns: f64,
     memory_stats: MemoryStats,
 
-    pub fn print(self: MemoryBenchmarkResult, file: std.fs.File) !void {
+    pub fn print(self: MemoryBenchmarkResult, w: *Io.Writer) !void {
         var buf: [512]u8 = undefined;
 
         const header = try std.fmt.bufPrint(&buf, "\n{s}\n", .{self.name});
-        try file.writeAll(header);
+        try w.writeAll(header);
 
         const time = try std.fmt.bufPrint(&buf, "  Time: {d:.2} µs\n", .{self.time_ns / 1000.0});
-        try file.writeAll(time);
+        try w.writeAll(time);
 
         const stats_str = self.memory_stats.format();
         const null_pos = std.mem.indexOfScalar(u8, &stats_str, 0) orelse stats_str.len;
-        try file.writeAll(stats_str[0..null_pos]);
-        try file.writeAll("\n");
+        try w.writeAll(stats_str[0..null_pos]);
+        try w.writeAll("\n");
     }
 };

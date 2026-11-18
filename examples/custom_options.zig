@@ -40,10 +40,10 @@ fn slowOperation() void {
     global_sum = sum;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, init.io);
     defer suite.deinit();
 
     // Fast operation - use more iterations

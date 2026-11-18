@@ -9,6 +9,7 @@
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// A group of related benchmarks
 pub const BenchmarkGroup = struct {
@@ -17,18 +18,18 @@ pub const BenchmarkGroup = struct {
     suite: bench.BenchmarkSuite,
     parent: ?*BenchmarkGroup = null,
 
-    pub fn init(allocator: Allocator, name: []const u8) BenchmarkGroup {
+    pub fn init(allocator: Allocator, io: Io, name: []const u8) BenchmarkGroup {
         return .{
             .name = name,
-            .suite = bench.BenchmarkSuite.init(allocator),
+            .suite = bench.BenchmarkSuite.init(allocator, io),
         };
     }
 
-    pub fn initWithDescription(allocator: Allocator, name: []const u8, description: []const u8) BenchmarkGroup {
+    pub fn initWithDescription(allocator: Allocator, io: Io, name: []const u8, description: []const u8) BenchmarkGroup {
         return .{
             .name = name,
             .description = description,
-            .suite = bench.BenchmarkSuite.init(allocator),
+            .suite = bench.BenchmarkSuite.init(allocator, io),
         };
     }
 
@@ -53,7 +54,9 @@ pub const BenchmarkGroup = struct {
 
     /// Run all benchmarks in this group
     pub fn run(self: *BenchmarkGroup) !void {
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.suite.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [512]u8 = undefined;
 
         // Print group header
@@ -72,6 +75,7 @@ pub const BenchmarkGroup = struct {
             });
             try stdout.writeAll(desc_line);
         }
+        try stdout.flush();
 
         try self.suite.run();
     }
@@ -81,12 +85,14 @@ pub const BenchmarkGroup = struct {
 pub const GroupManager = struct {
     groups: std.ArrayList(BenchmarkGroup),
     allocator: Allocator,
+    io: Io,
     active_group_filter: ?[]const u8 = null,
 
-    pub fn init(allocator: Allocator) GroupManager {
+    pub fn init(allocator: Allocator, io: Io) GroupManager {
         return .{
-            .groups = std.ArrayList(BenchmarkGroup){},
+            .groups = std.ArrayList(BenchmarkGroup).empty,
             .allocator = allocator,
+            .io = io,
         };
     }
 
@@ -99,14 +105,14 @@ pub const GroupManager = struct {
 
     /// Add a new group
     pub fn addGroup(self: *GroupManager, name: []const u8) !*BenchmarkGroup {
-        const group = BenchmarkGroup.init(self.allocator, name);
+        const group = BenchmarkGroup.init(self.allocator, self.io, name);
         try self.groups.append(self.allocator, group);
         return &self.groups.items[self.groups.items.len - 1];
     }
 
     /// Add a new group with description
     pub fn addGroupWithDescription(self: *GroupManager, name: []const u8, description: []const u8) !*BenchmarkGroup {
-        const group = BenchmarkGroup.initWithDescription(self.allocator, name, description);
+        const group = BenchmarkGroup.initWithDescription(self.allocator, self.io, name, description);
         try self.groups.append(self.allocator, group);
         return &self.groups.items[self.groups.items.len - 1];
     }
@@ -124,7 +130,9 @@ pub const GroupManager = struct {
 
     /// Run all groups (or filtered groups)
     pub fn runAll(self: *GroupManager) !void {
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [512]u8 = undefined;
 
         const header = try std.fmt.bufPrint(&buf, "\n{s}{s}Benchmark Groups{s}\n", .{
@@ -133,6 +141,7 @@ pub const GroupManager = struct {
             bench.Formatter.RESET,
         });
         try stdout.writeAll(header);
+        try stdout.flush();
 
         var ran_count: usize = 0;
         for (self.groups.items) |*group| {
@@ -152,6 +161,7 @@ pub const GroupManager = struct {
             });
             try stdout.writeAll(summary);
         }
+        try stdout.flush();
     }
 
     /// Run a specific group by name

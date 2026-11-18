@@ -10,6 +10,7 @@
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// A/B test configuration
 pub const ABTestConfig = struct {
@@ -73,9 +74,11 @@ pub const ABTest = struct {
     variant_b: *const fn () void,
     config: ABTestConfig,
     allocator: Allocator,
+    io: Io,
 
     pub fn init(
         allocator: Allocator,
+        io: Io,
         name: []const u8,
         variant_a: *const fn () void,
         variant_b: *const fn () void,
@@ -87,12 +90,13 @@ pub const ABTest = struct {
             .variant_b = variant_b,
             .config = config,
             .allocator = allocator,
+            .io = io,
         };
     }
 
     /// Run the A/B test
     pub fn run(self: *const ABTest) !ABTestResult {
-        var prng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
+        var prng = std.Random.DefaultPrng.init(@intCast(bench.clock.milliTimestamp(self.io)));
         const random = prng.random();
 
         // Determine execution order
@@ -101,12 +105,11 @@ pub const ABTest = struct {
         // Run benchmarks
         const result_a = if (run_a_first)
             try self.runVariant(.a)
-        else
-            blk: {
-                const temp = try self.runVariant(.b);
-                _ = temp;
-                break :blk try self.runVariant(.a);
-            };
+        else blk: {
+            const temp = try self.runVariant(.b);
+            _ = temp;
+            break :blk try self.runVariant(.a);
+        };
 
         const result_b = if (run_a_first)
             try self.runVariant(.b)
@@ -156,7 +159,7 @@ pub const ABTest = struct {
 
         const benchmark = bench.Benchmark.init(self.name, func);
 
-        return try benchmark.run(self.allocator);
+        return try benchmark.run(self.allocator, self.io);
     }
 
     fn calculateTStatistic(self: *const ABTest, a: bench.BenchmarkResult, b: bench.BenchmarkResult) !f64 {
@@ -176,7 +179,7 @@ pub const ABTest = struct {
         // For a more accurate implementation, use a proper t-distribution
         const abs_t = @abs(t_stat);
         if (abs_t > 2.576) return 0.01; // 99% confidence
-        if (abs_t > 1.96) return 0.05;  // 95% confidence
+        if (abs_t > 1.96) return 0.05; // 95% confidence
         if (abs_t > 1.645) return 0.10; // 90% confidence
         return 0.20;
     }
@@ -201,8 +204,10 @@ pub const ABTest = struct {
     }
 
     /// Print A/B test results
-    pub fn printResults(result: *const ABTestResult) !void {
-        const stdout = std.fs.File.stdout();
+    pub fn printResults(io: Io, result: *const ABTestResult) !void {
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [512]u8 = undefined;
 
         const header = try std.fmt.bufPrint(&buf, "\n{s}=== A/B Test Results ==={s}\n", .{
@@ -286,6 +291,7 @@ pub const ABTest = struct {
             });
             try stdout.writeAll(conclusion);
         }
+        try stdout.flush();
     }
 };
 
@@ -297,8 +303,8 @@ pub fn estimateSampleSize(
 ) u32 {
     // Simplified sample size estimation
     // Based on Cohen's d and desired power
-    const z_alpha = if (alpha <= 0.01) 2.576 else if (alpha <= 0.05) 1.96 else 1.645;
-    const z_beta = if (power >= 0.90) 1.282 else if (power >= 0.80) 0.842 else 0.524;
+    const z_alpha: f64 = if (alpha <= 0.01) 2.576 else if (alpha <= 0.05) 1.96 else 1.645;
+    const z_beta: f64 = if (power >= 0.90) 1.282 else if (power >= 0.80) 0.842 else 0.524;
 
     const n = ((z_alpha + z_beta) * (z_alpha + z_beta) * 2.0) / (effect_size * effect_size);
     return @intFromFloat(@ceil(n));

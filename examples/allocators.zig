@@ -15,7 +15,7 @@ var global_result: usize = 0;
 
 // Benchmark function that uses the provided allocator
 fn benchWithPageAllocator(allocator: std.mem.Allocator) void {
-    var list = std.ArrayList(u64){};
+    var list = std.ArrayList(u64).empty;
     defer list.deinit(allocator);
 
     var i: usize = 0;
@@ -26,7 +26,7 @@ fn benchWithPageAllocator(allocator: std.mem.Allocator) void {
 }
 
 fn benchWithGPA(allocator: std.mem.Allocator) void {
-    var list = std.ArrayList(u64){};
+    var list = std.ArrayList(u64).empty;
     defer list.deinit(allocator);
 
     var i: usize = 0;
@@ -37,7 +37,7 @@ fn benchWithGPA(allocator: std.mem.Allocator) void {
 }
 
 fn benchWithArena(allocator: std.mem.Allocator) void {
-    var list = std.ArrayList(u64){};
+    var list = std.ArrayList(u64).empty;
     defer list.deinit(allocator);
 
     var i: usize = 0;
@@ -64,11 +64,13 @@ fn benchHashMapOperations(allocator: std.mem.Allocator) void {
     global_result = sum;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+
     // Create different allocators
     const page_allocator = std.heap.page_allocator;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const gpa_allocator = gpa.allocator();
 
@@ -78,13 +80,14 @@ pub fn main() !void {
 
     // Suite with page allocator
     {
-        var suite = bench.BenchmarkSuite.init(page_allocator);
+        var suite = bench.BenchmarkSuite.init(page_allocator, io);
         defer suite.deinit();
 
         try suite.addWithAllocator("ArrayList (PageAllocator)", benchWithPageAllocator);
         try suite.addWithAllocator("HashMap (PageAllocator)", benchHashMapOperations);
 
-        const stdout = std.fs.File.stdout();
+        var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
+        const stdout = &stdout_writer.interface;
         var buf: [256]u8 = undefined;
         const msg = try std.fmt.bufPrint(&buf, "\n{s}[PageAllocator]{s}\n", .{ bench.Formatter.CYAN, bench.Formatter.RESET });
         try stdout.writeAll(msg);
@@ -94,13 +97,14 @@ pub fn main() !void {
 
     // Suite with GPA
     {
-        var suite = bench.BenchmarkSuite.init(gpa_allocator);
+        var suite = bench.BenchmarkSuite.init(gpa_allocator, io);
         defer suite.deinit();
 
         try suite.addWithAllocator("ArrayList (GPA)", benchWithGPA);
         try suite.addWithAllocator("HashMap (GPA)", benchHashMapOperations);
 
-        const stdout = std.fs.File.stdout();
+        var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
+        const stdout = &stdout_writer.interface;
         var buf: [256]u8 = undefined;
         const msg = try std.fmt.bufPrint(&buf, "\n{s}[GeneralPurposeAllocator]{s}\n", .{ bench.Formatter.CYAN, bench.Formatter.RESET });
         try stdout.writeAll(msg);
@@ -110,13 +114,14 @@ pub fn main() !void {
 
     // Suite with Arena
     {
-        var suite = bench.BenchmarkSuite.init(arena_allocator);
+        var suite = bench.BenchmarkSuite.init(arena_allocator, io);
         defer suite.deinit();
 
         try suite.addWithAllocator("ArrayList (Arena)", benchWithArena);
         try suite.addWithAllocator("HashMap (Arena)", benchHashMapOperations);
 
-        const stdout = std.fs.File.stdout();
+        var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
+        const stdout = &stdout_writer.interface;
         var buf: [256]u8 = undefined;
         const msg = try std.fmt.bufPrint(&buf, "\n{s}[ArenaAllocator]{s}\n", .{ bench.Formatter.CYAN, bench.Formatter.RESET });
         try stdout.writeAll(msg);

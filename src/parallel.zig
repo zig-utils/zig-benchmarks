@@ -10,6 +10,7 @@ const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
 const Thread = std.Thread;
+const Io = std.Io;
 
 /// Configuration for parallel benchmarks
 pub const ParallelConfig = struct {
@@ -50,6 +51,7 @@ pub const ThreadResult = struct {
 
 /// Context for thread execution
 const ThreadContext = struct {
+    io: Io,
     func: *const fn () void,
     iterations: u32,
     warmup: u32,
@@ -62,13 +64,15 @@ pub const ParallelBenchmark = struct {
     func: *const fn () void,
     config: ParallelConfig,
     allocator: Allocator,
+    io: Io,
 
-    pub fn init(allocator: Allocator, name: []const u8, func: *const fn () void, config: ParallelConfig) ParallelBenchmark {
+    pub fn init(allocator: Allocator, io: Io, name: []const u8, func: *const fn () void, config: ParallelConfig) ParallelBenchmark {
         return .{
             .name = name,
             .func = func,
             .config = config,
             .allocator = allocator,
+            .io = io,
         };
     }
 
@@ -83,6 +87,7 @@ pub const ParallelBenchmark = struct {
         // Initialize contexts
         for (contexts, 0..) |*ctx, i| {
             ctx.* = .{
+                .io = self.io,
                 .func = self.func,
                 .iterations = self.config.iterations_per_thread,
                 .warmup = self.config.warmup_iterations,
@@ -136,8 +141,10 @@ pub const ParallelBenchmark = struct {
     }
 
     /// Print parallel benchmark results
-    pub fn printResult(result: *const ParallelResult) !void {
-        const stdout = std.fs.File.stdout();
+    pub fn printResult(io: Io, result: *const ParallelResult) !void {
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [512]u8 = undefined;
 
         const header = try std.fmt.bufPrint(&buf, "\n{s}=== Parallel Benchmark: {s} ==={s}\n", .{
@@ -187,12 +194,13 @@ pub const ParallelBenchmark = struct {
             bench.Formatter.RESET,
         });
         try stdout.writeAll(ops_thread_line);
+        try stdout.flush();
     }
 };
 
 /// Thread function that runs the benchmark
 fn runThread(ctx: *ThreadContext) void {
-    var timer = std.time.Timer.start() catch unreachable;
+    var timer = bench.Timer.start(ctx.io);
 
     // Warmup
     var i: u32 = 0;
@@ -220,9 +228,11 @@ pub const ScalabilityTest = struct {
     thread_counts: []const usize,
     iterations_per_thread: u32,
     allocator: Allocator,
+    io: Io,
 
     pub fn init(
         allocator: Allocator,
+        io: Io,
         name: []const u8,
         func: *const fn () void,
         thread_counts: []const usize,
@@ -234,12 +244,15 @@ pub const ScalabilityTest = struct {
             .thread_counts = thread_counts,
             .iterations_per_thread = iterations_per_thread,
             .allocator = allocator,
+            .io = io,
         };
     }
 
     /// Run scalability test with all thread counts
     pub fn run(self: *const ScalabilityTest) !void {
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [512]u8 = undefined;
 
         const header = try std.fmt.bufPrint(&buf, "\n{s}=== Scalability Test: {s} ==={s}\n", .{
@@ -248,6 +261,7 @@ pub const ScalabilityTest = struct {
             bench.Formatter.RESET,
         });
         try stdout.writeAll(header);
+        try stdout.flush();
 
         for (self.thread_counts) |thread_count| {
             const config = ParallelConfig{
@@ -256,7 +270,7 @@ pub const ScalabilityTest = struct {
                 .warmup_iterations = 5,
             };
 
-            const pb = ParallelBenchmark.init(self.allocator, self.name, self.func, config);
+            const pb = ParallelBenchmark.init(self.allocator, self.io, self.name, self.func, config);
             var result = try pb.run();
             defer result.deinit();
 
@@ -268,6 +282,7 @@ pub const ScalabilityTest = struct {
                 result.ops_per_sec_per_thread,
             });
             try stdout.writeAll(line);
+            try stdout.flush();
         }
     }
 };

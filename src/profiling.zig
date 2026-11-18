@@ -11,6 +11,7 @@
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// Trace event type
 pub const TraceEventType = enum {
@@ -37,14 +38,16 @@ pub const ProfilingSession = struct {
     events: std.ArrayList(TraceEvent),
     start_time: u64,
     allocator: Allocator,
+    io: Io,
     thread_id: u32,
 
-    pub fn init(allocator: Allocator) ProfilingSession {
+    pub fn init(allocator: Allocator, io: Io) ProfilingSession {
         const thread_id = @as(u32, @truncate(std.Thread.getCurrentId()));
         return .{
-            .events = std.ArrayList(TraceEvent){},
-            .start_time = @intCast(std.time.nanoTimestamp()),
+            .events = std.ArrayList(TraceEvent).empty,
+            .start_time = @intCast(bench.clock.nanoTimestamp(io)),
             .allocator = allocator,
+            .io = io,
             .thread_id = thread_id,
         };
     }
@@ -57,7 +60,7 @@ pub const ProfilingSession = struct {
     pub fn recordFunctionEnter(self: *ProfilingSession, name: []const u8) !void {
         try self.events.append(self.allocator, .{
             .event_type = .function_enter,
-            .timestamp_ns = @intCast(std.time.nanoTimestamp()),
+            .timestamp_ns = @intCast(bench.clock.nanoTimestamp(self.io)),
             .name = name,
             .thread_id = self.thread_id,
         });
@@ -67,7 +70,7 @@ pub const ProfilingSession = struct {
     pub fn recordFunctionExit(self: *ProfilingSession, name: []const u8, duration_ns: u64) !void {
         try self.events.append(self.allocator, .{
             .event_type = .function_exit,
-            .timestamp_ns = @intCast(std.time.nanoTimestamp()),
+            .timestamp_ns = @intCast(bench.clock.nanoTimestamp(self.io)),
             .name = name,
             .thread_id = self.thread_id,
             .duration_ns = duration_ns,
@@ -78,7 +81,7 @@ pub const ProfilingSession = struct {
     pub fn recordMarker(self: *ProfilingSession, name: []const u8, category: ?[]const u8) !void {
         try self.events.append(self.allocator, .{
             .event_type = .custom_marker,
-            .timestamp_ns = @intCast(std.time.nanoTimestamp()),
+            .timestamp_ns = @intCast(bench.clock.nanoTimestamp(self.io)),
             .name = name,
             .category = category,
             .thread_id = self.thread_id,
@@ -87,22 +90,27 @@ pub const ProfilingSession = struct {
 
     /// Export to Chrome Tracing format (JSON)
     pub fn exportChromeTracing(self: *ProfilingSession, output_path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(output_path, .{});
-        defer file.close();
+        const file = try Io.Dir.cwd().createFile(self.io, output_path, .{});
+        defer file.close(self.io);
+        var file_buf: [4096]u8 = undefined;
+        var file_writer = file.writer(self.io, &file_buf);
+        const w = &file_writer.interface;
 
-        try file.writeAll("{\n");
-        try file.writeAll("  \"traceEvents\": [\n");
+        try w.writeAll("{\n");
+        try w.writeAll("  \"traceEvents\": [\n");
 
         for (self.events.items, 0..) |event, i| {
-            try self.writeChromeEvent(file, &event, i < self.events.items.len - 1);
+            try self.writeChromeEvent(w, &event, i < self.events.items.len - 1);
         }
 
-        try file.writeAll("  ],\n");
-        try file.writeAll("  \"displayTimeUnit\": \"ns\"\n");
-        try file.writeAll("}\n");
+        try w.writeAll("  ],\n");
+        try w.writeAll("  \"displayTimeUnit\": \"ns\"\n");
+        try w.writeAll("}\n");
+
+        try w.flush();
     }
 
-    fn writeChromeEvent(self: *ProfilingSession, file: std.fs.File, event: *const TraceEvent, has_next: bool) !void {
+    fn writeChromeEvent(self: *ProfilingSession, w: *Io.Writer, event: *const TraceEvent, has_next: bool) !void {
         var buf: [1024]u8 = undefined;
 
         const ph = switch (event.event_type) {
@@ -128,22 +136,22 @@ pub const ProfilingSession = struct {
             ts / 1000, // Convert to microseconds for Chrome
             event.thread_id,
         });
-        try file.writeAll(line);
+        try w.writeAll(line);
 
         if (event.duration_ns) |dur| {
             const dur_line = try std.fmt.bufPrint(&buf, ",\n      \"dur\": {d}", .{dur / 1000});
-            try file.writeAll(dur_line);
+            try w.writeAll(dur_line);
         }
 
         if (event.category) |cat| {
             const cat_line = try std.fmt.bufPrint(&buf, ",\n      \"cat\": \"{s}\"", .{cat});
-            try file.writeAll(cat_line);
+            try w.writeAll(cat_line);
         }
 
         if (has_next) {
-            try file.writeAll("\n    },\n");
+            try w.writeAll("\n    },\n");
         } else {
-            try file.writeAll("\n    }\n");
+            try w.writeAll("\n    }\n");
         }
     }
 };
@@ -170,19 +178,20 @@ pub const ProfilingAllocator = struct {
             .vtable = &.{
                 .alloc = alloc,
                 .resize = resize,
+                .remap = remap,
                 .free = free,
             },
         };
     }
 
-    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+    fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
         const result = self.parent_allocator.rawAlloc(len, ptr_align, ret_addr);
         if (result) |_| {
             self.total_allocated += len;
             self.session.events.append(self.session.allocator, .{
                 .event_type = .allocation,
-                .timestamp_ns = @intCast(std.time.nanoTimestamp()),
+                .timestamp_ns = @intCast(bench.clock.nanoTimestamp(self.session.io)),
                 .name = "alloc",
                 .thread_id = self.session.thread_id,
                 .duration_ns = len,
@@ -191,17 +200,22 @@ pub const ProfilingAllocator = struct {
         return result;
     }
 
-    fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+    fn resize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
         return self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr);
     }
 
-    fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+    fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
+        return self.parent_allocator.rawRemap(buf, buf_align, new_len, ret_addr);
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
         self.total_freed += buf.len;
         self.session.events.append(self.session.allocator, .{
             .event_type = .deallocation,
-            .timestamp_ns = @intCast(std.time.nanoTimestamp()),
+            .timestamp_ns = @intCast(bench.clock.nanoTimestamp(self.session.io)),
             .name = "free",
             .thread_id = self.session.thread_id,
             .duration_ns = buf.len,
@@ -216,24 +230,26 @@ pub const ProfilingBenchmark = struct {
     func: *const fn () void,
     iterations: u32,
     allocator: Allocator,
+    io: Io,
 
-    pub fn init(allocator: Allocator, name: []const u8, func: *const fn () void, iterations: u32) ProfilingBenchmark {
+    pub fn init(allocator: Allocator, io: Io, name: []const u8, func: *const fn () void, iterations: u32) ProfilingBenchmark {
         return .{
             .name = name,
             .func = func,
             .iterations = iterations,
             .allocator = allocator,
+            .io = io,
         };
     }
 
     /// Run benchmark with profiling
     pub fn run(self: *const ProfilingBenchmark) !ProfilingResult {
-        var session = ProfilingSession.init(self.allocator);
+        var session = ProfilingSession.init(self.allocator, self.io);
         errdefer session.deinit();
 
         try session.recordMarker("benchmark_start", "benchmark");
 
-        var timer = try std.time.Timer.start();
+        var timer = bench.Timer.start(self.io);
         var iteration: u32 = 0;
         while (iteration < self.iterations) : (iteration += 1) {
             try session.recordFunctionEnter(self.name);
@@ -272,7 +288,9 @@ pub const ProfilingResult = struct {
 
     /// Print profiling summary
     pub fn printSummary(self: *const ProfilingResult) !void {
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.session.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [512]u8 = undefined;
 
         const header = try std.fmt.bufPrint(&buf, "\n{s}=== Profiling Summary: {s} ==={s}\n", .{
@@ -307,6 +325,7 @@ pub const ProfilingResult = struct {
             markers,
         });
         try stdout.writeAll(breakdown);
+        try stdout.flush();
     }
 };
 
@@ -314,11 +333,13 @@ pub const ProfilingResult = struct {
 pub const FlameGraphData = struct {
     stacks: std.ArrayList([]const u8),
     allocator: Allocator,
+    io: Io,
 
-    pub fn init(allocator: Allocator) FlameGraphData {
+    pub fn init(allocator: Allocator, io: Io) FlameGraphData {
         return .{
-            .stacks = std.ArrayList([]const u8){},
+            .stacks = .empty,
             .allocator = allocator,
+            .io = io,
         };
     }
 
@@ -337,13 +358,18 @@ pub const FlameGraphData = struct {
 
     /// Export to flamegraph.pl format
     pub fn exportFlamegraph(self: *FlameGraphData, output_path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(output_path, .{});
-        defer file.close();
+        const file = try Io.Dir.cwd().createFile(self.io, output_path, .{});
+        defer file.close(self.io);
+        var file_buf: [4096]u8 = undefined;
+        var file_writer = file.writer(self.io, &file_buf);
+        const w = &file_writer.interface;
 
         for (self.stacks.items) |stack| {
             var buf: [1024]u8 = undefined;
             const line = try std.fmt.bufPrint(&buf, "{s} 1\n", .{stack});
-            try file.writeAll(line);
+            try w.writeAll(line);
         }
+
+        try w.flush();
     }
 };

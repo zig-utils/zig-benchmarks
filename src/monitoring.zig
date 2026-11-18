@@ -10,6 +10,7 @@
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// Prometheus metric type
 pub const MetricType = enum {
@@ -23,12 +24,14 @@ pub const MetricType = enum {
 pub const PrometheusExporter = struct {
     namespace: []const u8,
     allocator: Allocator,
+    io: Io,
     labels: std.StringHashMap([]const u8),
 
-    pub fn init(allocator: Allocator, namespace: []const u8) PrometheusExporter {
+    pub fn init(allocator: Allocator, io: Io, namespace: []const u8) PrometheusExporter {
         return .{
             .namespace = namespace,
             .allocator = allocator,
+            .io = io,
             .labels = std.StringHashMap([]const u8).init(allocator),
         };
     }
@@ -44,38 +47,42 @@ pub const PrometheusExporter = struct {
 
     /// Export benchmark results to Prometheus format
     pub fn exportResults(self: *PrometheusExporter, results: []const bench.BenchmarkResult, output_path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(output_path, .{});
-        defer file.close();
+        const file = try Io.Dir.cwd().createFile(self.io, output_path, .{});
+        defer file.close(self.io);
+        var file_buf: [4096]u8 = undefined;
+        var file_writer = file.writer(self.io, &file_buf);
+        const w = &file_writer.interface;
 
         for (results) |result| {
-            try self.writeMetric(file, result);
+            try self.writeMetric(w, result);
         }
+
+        try w.flush();
     }
 
-    fn writeMetric(self: *PrometheusExporter, file: std.fs.File, result: bench.BenchmarkResult) !void {
+    fn writeMetric(self: *PrometheusExporter, w: *Io.Writer, result: bench.BenchmarkResult) !void {
         var buf: [1024]u8 = undefined;
 
         // Write HELP and TYPE
         const help = try std.fmt.bufPrint(&buf, "# HELP {s}_duration_nanoseconds Benchmark execution time in nanoseconds\n", .{self.namespace});
-        try file.writeAll(help);
+        try w.writeAll(help);
 
         const type_line = try std.fmt.bufPrint(&buf, "# TYPE {s}_duration_nanoseconds histogram\n", .{self.namespace});
-        try file.writeAll(type_line);
+        try w.writeAll(type_line);
 
         // Write metrics with labels
         var labels_buf: [512]u8 = undefined;
         var labels_fba = std.heap.FixedBufferAllocator.init(&labels_buf);
         const labels_alloc = labels_fba.allocator();
 
-        var labels_str = std.ArrayList(u8){};
+        var labels_str = std.ArrayList(u8).empty;
         defer labels_str.deinit(labels_alloc);
 
-        const writer = labels_str.writer(labels_alloc);
-        try writer.print("benchmark=\"{s}\"", .{result.name});
+        try labels_str.print(labels_alloc, "benchmark=\"{s}\"", .{result.name});
 
         var it = self.labels.iterator();
         while (it.next()) |entry| {
-            try writer.print(",{s}=\"{s}\"", .{ entry.key_ptr.*, entry.value_ptr.* });
+            try labels_str.print(labels_alloc, ",{s}=\"{s}\"", .{ entry.key_ptr.*, entry.value_ptr.* });
         }
 
         // Write mean
@@ -84,7 +91,7 @@ pub const PrometheusExporter = struct {
             labels_str.items,
             result.mean,
         });
-        try file.writeAll(mean_metric);
+        try w.writeAll(mean_metric);
 
         // Write percentiles as histogram buckets
         const p50_metric = try std.fmt.bufPrint(&buf, "{s}_duration_nanoseconds_bucket{{quantile=\"0.5\",{s}}} {d}\n", .{
@@ -92,37 +99,37 @@ pub const PrometheusExporter = struct {
             labels_str.items,
             result.p50,
         });
-        try file.writeAll(p50_metric);
+        try w.writeAll(p50_metric);
 
         const p75_metric = try std.fmt.bufPrint(&buf, "{s}_duration_nanoseconds_bucket{{quantile=\"0.75\",{s}}} {d}\n", .{
             self.namespace,
             labels_str.items,
             result.p75,
         });
-        try file.writeAll(p75_metric);
+        try w.writeAll(p75_metric);
 
         const p99_metric = try std.fmt.bufPrint(&buf, "{s}_duration_nanoseconds_bucket{{quantile=\"0.99\",{s}}} {d}\n", .{
             self.namespace,
             labels_str.items,
             result.p99,
         });
-        try file.writeAll(p99_metric);
+        try w.writeAll(p99_metric);
 
         // Write ops/sec as gauge
         const ops_help = try std.fmt.bufPrint(&buf, "# HELP {s}_ops_per_second Operations per second\n", .{self.namespace});
-        try file.writeAll(ops_help);
+        try w.writeAll(ops_help);
 
         const ops_type = try std.fmt.bufPrint(&buf, "# TYPE {s}_ops_per_second gauge\n", .{self.namespace});
-        try file.writeAll(ops_type);
+        try w.writeAll(ops_type);
 
         const ops_metric = try std.fmt.bufPrint(&buf, "{s}_ops_per_second{{antml:{s}}} {d:.2}\n", .{
             self.namespace,
             labels_str.items,
             result.ops_per_sec,
         });
-        try file.writeAll(ops_metric);
+        try w.writeAll(ops_metric);
 
-        try file.writeAll("\n");
+        try w.writeAll("\n");
     }
 
     /// Push metrics to Prometheus Push Gateway
@@ -141,6 +148,7 @@ pub const PrometheusExporter = struct {
 pub const GrafanaDashboard = struct {
     title: []const u8,
     allocator: Allocator,
+    io: Io,
     panels: std.ArrayList(Panel),
 
     const Panel = struct {
@@ -149,11 +157,12 @@ pub const GrafanaDashboard = struct {
         panel_type: []const u8,
     };
 
-    pub fn init(allocator: Allocator, title: []const u8) GrafanaDashboard {
+    pub fn init(allocator: Allocator, io: Io, title: []const u8) GrafanaDashboard {
         return .{
             .title = title,
             .allocator = allocator,
-            .panels = std.ArrayList(Panel){},
+            .io = io,
+            .panels = std.ArrayList(Panel).empty,
         };
     }
 
@@ -172,49 +181,52 @@ pub const GrafanaDashboard = struct {
 
     /// Generate Grafana dashboard JSON
     pub fn generateJSON(self: *GrafanaDashboard, output_path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(output_path, .{});
-        defer file.close();
+        const file = try Io.Dir.cwd().createFile(self.io, output_path, .{});
+        defer file.close(self.io);
+        var file_buf: [4096]u8 = undefined;
+        var file_writer = file.writer(self.io, &file_buf);
+        const w = &file_writer.interface;
 
         var buf: [4096]u8 = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const temp_alloc = fba.allocator();
 
-        var json = std.ArrayList(u8){};
+        var json = std.ArrayList(u8).empty;
         defer json.deinit(temp_alloc);
 
-        const writer = json.writer(temp_alloc);
-
-        try writer.writeAll("{\n");
-        try writer.print("  \"title\": \"{s}\",\n", .{self.title});
-        try writer.writeAll("  \"editable\": true,\n");
-        try writer.writeAll("  \"panels\": [\n");
+        try json.appendSlice(temp_alloc, "{\n");
+        try json.print(temp_alloc, "  \"title\": \"{s}\",\n", .{self.title});
+        try json.appendSlice(temp_alloc, "  \"editable\": true,\n");
+        try json.appendSlice(temp_alloc, "  \"panels\": [\n");
 
         for (self.panels.items, 0..) |panel, i| {
-            try writer.writeAll("    {\n");
-            try writer.print("      \"id\": {d},\n", .{i + 1});
-            try writer.print("      \"title\": \"{s}\",\n", .{panel.title});
-            try writer.print("      \"type\": \"{s}\",\n", .{panel.panel_type});
-            try writer.writeAll("      \"targets\": [\n");
-            try writer.writeAll("        {\n");
-            try writer.print("          \"expr\": \"{s}\"\n", .{panel.query});
-            try writer.writeAll("        }\n");
-            try writer.writeAll("      ]\n");
+            try json.appendSlice(temp_alloc, "    {\n");
+            try json.print(temp_alloc, "      \"id\": {d},\n", .{i + 1});
+            try json.print(temp_alloc, "      \"title\": \"{s}\",\n", .{panel.title});
+            try json.print(temp_alloc, "      \"type\": \"{s}\",\n", .{panel.panel_type});
+            try json.appendSlice(temp_alloc, "      \"targets\": [\n");
+            try json.appendSlice(temp_alloc, "        {\n");
+            try json.print(temp_alloc, "          \"expr\": \"{s}\"\n", .{panel.query});
+            try json.appendSlice(temp_alloc, "        }\n");
+            try json.appendSlice(temp_alloc, "      ]\n");
             if (i < self.panels.items.len - 1) {
-                try writer.writeAll("    },\n");
+                try json.appendSlice(temp_alloc, "    },\n");
             } else {
-                try writer.writeAll("    }\n");
+                try json.appendSlice(temp_alloc, "    }\n");
             }
         }
 
-        try writer.writeAll("  ]\n");
-        try writer.writeAll("}\n");
+        try json.appendSlice(temp_alloc, "  ]\n");
+        try json.appendSlice(temp_alloc, "}\n");
 
-        try file.writeAll(json.items);
+        try w.writeAll(json.items);
+
+        try w.flush();
     }
 
     /// Create a default dashboard for benchmark monitoring
-    pub fn createDefaultDashboard(allocator: Allocator, namespace: []const u8) !GrafanaDashboard {
-        var dashboard = GrafanaDashboard.init(allocator, "Benchmark Metrics");
+    pub fn createDefaultDashboard(allocator: Allocator, io: Io, namespace: []const u8) !GrafanaDashboard {
+        var dashboard = GrafanaDashboard.init(allocator, io, "Benchmark Metrics");
 
         // Add duration panel
         var duration_query_buf: [256]u8 = undefined;
@@ -248,11 +260,13 @@ pub const TimeSeriesPoint = struct {
 pub const TimeSeriesCollector = struct {
     series: std.StringHashMap(std.ArrayList(TimeSeriesPoint)),
     allocator: Allocator,
+    io: Io,
 
-    pub fn init(allocator: Allocator) TimeSeriesCollector {
+    pub fn init(allocator: Allocator, io: Io) TimeSeriesCollector {
         return .{
             .series = std.StringHashMap(std.ArrayList(TimeSeriesPoint)).init(allocator),
             .allocator = allocator,
+            .io = io,
         };
     }
 
@@ -266,11 +280,11 @@ pub const TimeSeriesCollector = struct {
 
     /// Record a benchmark result
     pub fn record(self: *TimeSeriesCollector, name: []const u8, value: f64) !void {
-        const timestamp = std.time.milliTimestamp();
+        const timestamp = bench.clock.milliTimestamp(self.io);
 
         const result = try self.series.getOrPut(name);
         if (!result.found_existing) {
-            result.value_ptr.* = std.ArrayList(TimeSeriesPoint){};
+            result.value_ptr.* = std.ArrayList(TimeSeriesPoint).empty;
         }
 
         try result.value_ptr.append(self.allocator, .{
@@ -281,10 +295,13 @@ pub const TimeSeriesCollector = struct {
 
     /// Export time series to CSV
     pub fn exportCSV(self: *TimeSeriesCollector, output_path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(output_path, .{});
-        defer file.close();
+        const file = try Io.Dir.cwd().createFile(self.io, output_path, .{});
+        defer file.close(self.io);
+        var file_buf: [4096]u8 = undefined;
+        var file_writer = file.writer(self.io, &file_buf);
+        const w = &file_writer.interface;
 
-        try file.writeAll("benchmark,timestamp,value\n");
+        try w.writeAll("benchmark,timestamp,value\n");
 
         var it = self.series.iterator();
         while (it.next()) |entry| {
@@ -298,8 +315,10 @@ pub const TimeSeriesCollector = struct {
                     point.timestamp,
                     point.value,
                 });
-                try file.writeAll(line);
+                try w.writeAll(line);
             }
         }
+
+        try w.flush();
     }
 };

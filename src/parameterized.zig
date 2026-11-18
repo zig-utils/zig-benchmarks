@@ -9,6 +9,7 @@
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// A parameterized benchmark that runs with different input values
 pub fn ParameterizedBenchmark(comptime T: type) type {
@@ -20,10 +21,12 @@ pub fn ParameterizedBenchmark(comptime T: type) type {
         parameters: []const T,
         opts: bench.BenchmarkOptions,
         allocator: Allocator,
+        io: Io,
 
         /// Initialize a parameterized benchmark
         pub fn init(
             allocator: Allocator,
+            io: Io,
             name_template: []const u8,
             func: *const fn (T) void,
             parameters: []const T,
@@ -34,12 +37,14 @@ pub fn ParameterizedBenchmark(comptime T: type) type {
                 .parameters = parameters,
                 .opts = .{},
                 .allocator = allocator,
+                .io = io,
             };
         }
 
         /// Initialize with custom options
         pub fn initWithOptions(
             allocator: Allocator,
+            io: Io,
             name_template: []const u8,
             func: *const fn (T) void,
             parameters: []const T,
@@ -51,12 +56,13 @@ pub fn ParameterizedBenchmark(comptime T: type) type {
                 .parameters = parameters,
                 .opts = opts,
                 .allocator = allocator,
+                .io = io,
             };
         }
 
         /// Generate benchmark suite with all parameters
         pub fn generateSuite(self: *const Self) !bench.BenchmarkSuite {
-            var suite = bench.BenchmarkSuite.init(self.allocator);
+            var suite = bench.BenchmarkSuite.init(self.allocator, self.io);
 
             for (self.parameters) |param| {
                 // Create wrapper function for this parameter
@@ -111,22 +117,24 @@ pub fn ParameterizedBenchmark(comptime T: type) type {
 /// Helper to create parameterized benchmarks with integer parameters
 pub fn intParameterized(
     allocator: Allocator,
+    io: Io,
     name: []const u8,
     func: *const fn (i64) void,
     parameters: []const i64,
 ) !bench.BenchmarkSuite {
-    const pb = ParameterizedBenchmark(i64).init(allocator, name, func, parameters);
+    const pb = ParameterizedBenchmark(i64).init(allocator, io, name, func, parameters);
     return try pb.generateSuite();
 }
 
 /// Helper to create parameterized benchmarks with size parameters (common use case)
 pub fn sizeParameterized(
     allocator: Allocator,
+    io: Io,
     name: []const u8,
     func: *const fn (usize) void,
     sizes: []const usize,
 ) !bench.BenchmarkSuite {
-    const pb = ParameterizedBenchmark(usize).init(allocator, name, func, sizes);
+    const pb = ParameterizedBenchmark(usize).init(allocator, io, name, func, sizes);
     return try pb.generateSuite();
 }
 
@@ -140,9 +148,11 @@ pub fn ParameterizedBenchmarkWithAllocator(comptime T: type) type {
         parameters: []const T,
         opts: bench.BenchmarkOptions,
         allocator: Allocator,
+        io: Io,
 
         pub fn init(
             allocator: Allocator,
+            io: Io,
             name_template: []const u8,
             func: *const fn (Allocator, T) void,
             parameters: []const T,
@@ -153,11 +163,12 @@ pub fn ParameterizedBenchmarkWithAllocator(comptime T: type) type {
                 .parameters = parameters,
                 .opts = .{},
                 .allocator = allocator,
+                .io = io,
             };
         }
 
         pub fn generateSuite(self: *const Self) !bench.BenchmarkSuite {
-            var suite = bench.BenchmarkSuite.init(self.allocator);
+            var suite = bench.BenchmarkSuite.init(self.allocator, self.io);
 
             for (self.parameters) |param| {
                 const wrapper = struct {
@@ -194,8 +205,8 @@ pub fn ParameterizedBenchmarkWithAllocator(comptime T: type) type {
 fn formatParam(comptime T: type, param: T, allocator: Allocator) ![]u8 {
     var buf: [128]u8 = undefined;
     const formatted = switch (@typeInfo(T)) {
-        .Int => try std.fmt.bufPrint(&buf, "{d}", .{param}),
-        .Float => try std.fmt.bufPrint(&buf, "{d:.2}", .{param}),
+        .int => try std.fmt.bufPrint(&buf, "{d}", .{param}),
+        .float => try std.fmt.bufPrint(&buf, "{d:.2}", .{param}),
         else => try std.fmt.bufPrint(&buf, "param", .{}),
     };
     return try allocator.dupe(u8, formatted);

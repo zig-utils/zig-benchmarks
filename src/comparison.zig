@@ -9,6 +9,7 @@
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const BenchmarkResult = bench.BenchmarkResult;
 
 /// Result of comparing a benchmark against its baseline
@@ -32,20 +33,18 @@ pub const ComparisonResult = struct {
     regression_threshold: f64 = 10.0,
 
     pub fn format(self: ComparisonResult, allocator: Allocator) ![]u8 {
-        var buf = std.ArrayList(u8){};
+        var buf = std.ArrayList(u8).empty;
         defer buf.deinit(allocator);
 
-        const writer = buf.writer(allocator);
-
         if (self.is_regression) {
-            try writer.print("❌ {s}: {d:.2}% SLOWER (regression)\n", .{ self.name, self.change_percent });
+            try buf.print(allocator, "❌ {s}: {d:.2}% SLOWER (regression)\n", .{ self.name, self.change_percent });
         } else if (self.change_percent < -5.0) {
-            try writer.print("✅ {s}: {d:.2}% faster (improvement)\n", .{ self.name, -self.change_percent });
+            try buf.print(allocator, "✅ {s}: {d:.2}% faster (improvement)\n", .{ self.name, -self.change_percent });
         } else {
-            try writer.print("⚪ {s}: {d:.2}% change (stable)\n", .{ self.name, self.change_percent });
+            try buf.print(allocator, "⚪ {s}: {d:.2}% change (stable)\n", .{ self.name, self.change_percent });
         }
 
-        try writer.print("   Current: {d:.2} ns, Baseline: {d:.2} ns\n", .{ self.current_mean, self.baseline_mean });
+        try buf.print(allocator, "   Current: {d:.2} ns, Baseline: {d:.2} ns\n", .{ self.current_mean, self.baseline_mean });
 
         return buf.toOwnedSlice(allocator);
     }
@@ -53,11 +52,13 @@ pub const ComparisonResult = struct {
 
 pub const Comparator = struct {
     allocator: Allocator,
+    io: Io,
     regression_threshold: f64,
 
-    pub fn init(allocator: Allocator, regression_threshold: f64) Comparator {
+    pub fn init(allocator: Allocator, io: Io, regression_threshold: f64) Comparator {
         return .{
             .allocator = allocator,
+            .io = io,
             .regression_threshold = regression_threshold,
         };
     }
@@ -66,10 +67,7 @@ pub const Comparator = struct {
         var baseline_map = std.StringHashMap(f64).init(self.allocator);
         errdefer baseline_map.deinit();
 
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-
-        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024); // 1MB max
+        const content = try Io.Dir.cwd().readFileAlloc(self.io, path, self.allocator, .limited(1024 * 1024)); // 1MB max
         defer self.allocator.free(content);
 
         // Parse JSON to extract benchmark means
@@ -110,7 +108,7 @@ pub const Comparator = struct {
             baseline_map.deinit();
         }
 
-        var results = std.ArrayList(ComparisonResult){};
+        var results = std.ArrayList(ComparisonResult).empty;
         defer results.deinit(self.allocator);
 
         for (current) |bench_result| {
@@ -132,16 +130,16 @@ pub const Comparator = struct {
         return results.toOwnedSlice(self.allocator);
     }
 
-    pub fn printComparison(self: Comparator, file: std.fs.File, comparisons: []const ComparisonResult) !void {
+    pub fn printComparison(self: Comparator, w: *Io.Writer, comparisons: []const ComparisonResult) !void {
         _ = self;
 
         var buf: [512]u8 = undefined;
 
         const header = try std.fmt.bufPrint(&buf, "\n{s}{s}Baseline Comparison{s}\n", .{ bench.Formatter.BOLD, bench.Formatter.CYAN, bench.Formatter.RESET });
-        try file.writeAll(header);
+        try w.writeAll(header);
 
         const divider = try std.fmt.bufPrint(&buf, "{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n", .{ bench.Formatter.DIM, bench.Formatter.RESET });
-        try file.writeAll(divider);
+        try w.writeAll(divider);
 
         var has_regression = false;
         for (comparisons) |comp| {
@@ -170,7 +168,7 @@ pub const Comparator = struct {
                 comp.change_percent,
                 bench.Formatter.RESET,
             });
-            try file.writeAll(line);
+            try w.writeAll(line);
 
             const detail = try std.fmt.bufPrint(&buf, "     {s}Current: {d:.2} ns | Baseline: {d:.2} ns{s}\n", .{
                 bench.Formatter.DIM,
@@ -178,14 +176,14 @@ pub const Comparator = struct {
                 comp.baseline_mean,
                 bench.Formatter.RESET,
             });
-            try file.writeAll(detail);
+            try w.writeAll(detail);
         }
 
-        try file.writeAll("\n");
+        try w.writeAll("\n");
 
         if (has_regression) {
             const warning = try std.fmt.bufPrint(&buf, "{s}⚠️  Performance regressions detected!{s}\n\n", .{ bench.Formatter.YELLOW, bench.Formatter.RESET });
-            try file.writeAll(warning);
+            try w.writeAll(warning);
         }
     }
 };

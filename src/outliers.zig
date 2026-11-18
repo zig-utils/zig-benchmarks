@@ -170,8 +170,8 @@ pub const OutlierDetector = struct {
     fn filterOutliers(self: *const OutlierDetector, samples: []const u64, lower: f64, upper: f64, allocator: Allocator) !OutlierResult {
         _ = self;
 
-        var cleaned_list = std.ArrayList(u64){};
-        var outlier_list = std.ArrayList(u64){};
+        var cleaned_list = std.ArrayList(u64).empty;
+        var outlier_list = std.ArrayList(u64).empty;
         defer cleaned_list.deinit(allocator);
         defer outlier_list.deinit(allocator);
 

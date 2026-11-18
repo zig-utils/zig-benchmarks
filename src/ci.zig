@@ -10,6 +10,7 @@ const std = @import("std");
 const bench = @import("bench");
 const comparison = @import("comparison");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const BenchmarkResult = bench.BenchmarkResult;
 
 /// Configuration for CI/CD integration
@@ -28,11 +29,13 @@ pub const OutputFormat = enum {
 
 pub const CIHelper = struct {
     allocator: Allocator,
+    io: Io,
     config: CIConfig,
 
-    pub fn init(allocator: Allocator, config: CIConfig) CIHelper {
+    pub fn init(allocator: Allocator, io: Io, config: CIConfig) CIHelper {
         return .{
             .allocator = allocator,
+            .io = io,
             .config = config,
         };
     }
@@ -43,7 +46,7 @@ pub const CIHelper = struct {
             return false;
         }
 
-        const comparator = comparison.Comparator.init(self.allocator, self.config.regression_threshold);
+        const comparator = comparison.Comparator.init(self.allocator, self.io, self.config.regression_threshold);
         const comparisons = try comparator.compare(results, self.config.baseline_path.?);
         defer self.allocator.free(comparisons);
 
@@ -59,7 +62,9 @@ pub const CIHelper = struct {
     }
 
     fn reportRegression(self: *CIHelper, comp: comparison.ComparisonResult) !void {
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [512]u8 = undefined;
 
         switch (self.config.output_format) {
@@ -88,10 +93,13 @@ pub const CIHelper = struct {
                 try stdout.writeAll(msg);
             },
         }
+        try stdout.flush();
     }
 
     pub fn generateSummary(self: *CIHelper, results: []const BenchmarkResult) !void {
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [1024]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [1024]u8 = undefined;
 
         switch (self.config.output_format) {
@@ -136,6 +144,7 @@ pub const CIHelper = struct {
                 }
             },
         }
+        try stdout.flush();
     }
 
     pub fn shouldFailBuild(self: *CIHelper, has_regression: bool) bool {
@@ -143,17 +152,10 @@ pub const CIHelper = struct {
     }
 };
 
-// Helper function to detect CI environment
-pub fn detectCIEnvironment() OutputFormat {
-    if (std.process.getEnvVarOwned(std.heap.page_allocator, "GITHUB_ACTIONS")) |val| {
-        std.heap.page_allocator.free(val);
-        return .github_actions;
-    } else |_| {}
-
-    if (std.process.getEnvVarOwned(std.heap.page_allocator, "GITLAB_CI")) |val| {
-        std.heap.page_allocator.free(val);
-        return .gitlab_ci;
-    } else |_| {}
-
+/// Detect the CI environment from the process environment
+/// (`std.process.Init.environ_map` in a 0.17 `main`).
+pub fn detectCIEnvironment(environ_map: *const std.process.Environ.Map) OutputFormat {
+    if (environ_map.contains("GITHUB_ACTIONS")) return .github_actions;
+    if (environ_map.contains("GITLAB_CI")) return .gitlab_ci;
     return .generic;
 }

@@ -1,7 +1,7 @@
 //! Zig Bench - A modern, performant benchmark framework for Zig
 //!
 //! This module provides a comprehensive benchmarking framework with:
-//! - High-precision timing using std.time.Timer
+//! - High-precision monotonic timing via std.Io clocks (see clock.zig)
 //! - Statistical analysis (mean, stddev, percentiles)
 //! - Beautiful CLI output with colors
 //! - Flexible configuration options
@@ -10,8 +10,12 @@
 //! - Custom allocator support
 
 const std = @import("std");
-const Timer = std.time.Timer;
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
+
+/// Clock helpers (monotonic `Timer`, wall-clock timestamps) built on `std.Io`.
+pub const clock = @import("clock.zig");
+pub const Timer = clock.Timer;
 
 /// Configuration options for individual benchmarks
 pub const BenchmarkOptions = struct {
@@ -85,11 +89,10 @@ pub const BenchmarkResult = struct {
     /// Export this result as a JSON string (legacy format)
     /// Note: Use the export module for more advanced export features
     pub fn toJson(self: *const BenchmarkResult, allocator: Allocator) ![]u8 {
-        var string = std.ArrayList(u8){};
+        var string = std.ArrayList(u8).empty;
         defer string.deinit(allocator);
 
-        var writer = string.writer(allocator);
-        try writer.print("{{\"name\":\"{s}\",\"mean\":{d:.2},\"stddev\":{d:.2},\"min\":{d},\"max\":{d},\"p50\":{d},\"p75\":{d},\"p99\":{d},\"ops_per_sec\":{d:.2},\"iterations\":{d}}}", .{
+        try string.print(allocator, "{{\"name\":\"{s}\",\"mean\":{d:.2},\"stddev\":{d:.2},\"min\":{d},\"max\":{d},\"p50\":{d},\"p75\":{d},\"p99\":{d},\"ops_per_sec\":{d:.2},\"iterations\":{d}}}", .{
             self.name,
             self.mean,
             self.stddev,
@@ -204,8 +207,8 @@ pub const Benchmark = struct {
         };
     }
 
-    pub fn run(self: *const Benchmark, allocator: Allocator) !BenchmarkResult {
-        var samples = std.ArrayList(u64){};
+    pub fn run(self: *const Benchmark, allocator: Allocator, io: Io) !BenchmarkResult {
+        var samples = std.ArrayList(u64).empty;
         errdefer samples.deinit(allocator);
 
         const is_allocator_func = self.allocator_func != null;
@@ -221,7 +224,7 @@ pub const Benchmark = struct {
         }
 
         // Benchmark phase
-        var timer = try Timer.start();
+        var timer = Timer.start(io);
         var total_time: u64 = 0;
         var iterations: u64 = 0;
 
@@ -287,6 +290,9 @@ pub const BenchmarkSuite = struct {
     /// Allocator for managing benchmarks
     allocator: Allocator,
 
+    /// I/O implementation used for clocks, stdout and baseline files
+    io: Io,
+
     /// Optional filter pattern - only benchmarks matching this substring will run
     filter: ?[]const u8 = null,
 
@@ -294,10 +300,11 @@ pub const BenchmarkSuite = struct {
     baseline_path: ?[]const u8 = null,
 
     /// Initialize a new benchmark suite
-    pub fn init(allocator: Allocator) BenchmarkSuite {
+    pub fn init(allocator: Allocator, io: Io) BenchmarkSuite {
         return .{
-            .benchmarks = std.ArrayList(Benchmark){},
+            .benchmarks = std.ArrayList(Benchmark).empty,
             .allocator = allocator,
+            .io = io,
         };
     }
 
@@ -343,31 +350,18 @@ pub const BenchmarkSuite = struct {
     }
 
     pub fn saveBaseline(self: *BenchmarkSuite, results: []const BenchmarkResult, path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
-
-        try file.writeAll("[\n");
-        for (results, 0..) |result, i| {
-            const json = try result.toJson(self.allocator);
-            defer self.allocator.free(json);
-            try file.writeAll("  ");
-            try file.writeAll(json);
-            if (i < results.len - 1) {
-                try file.writeAll(",\n");
-            } else {
-                try file.writeAll("\n");
-            }
-        }
-        try file.writeAll("]\n");
+        try writeBaseline(self.allocator, self.io, results, path);
     }
 
     pub fn run(self: *BenchmarkSuite) !void {
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         const formatter = Formatter{};
 
         try formatter.printHeader(stdout);
 
-        var results = std.ArrayList(BenchmarkResult){};
+        var results = std.ArrayList(BenchmarkResult).empty;
         defer {
             for (results.items) |*result| {
                 result.deinit();
@@ -382,7 +376,8 @@ pub const BenchmarkSuite = struct {
             }
 
             try formatter.printBenchmarkStart(stdout, benchmark.name);
-            const result = try benchmark.run(self.allocator);
+            try stdout.flush();
+            const result = try benchmark.run(self.allocator, self.io);
             try results.append(self.allocator, result);
             try formatter.printResult(stdout, &result);
         }
@@ -393,13 +388,37 @@ pub const BenchmarkSuite = struct {
             // Save baseline if path is set
             if (self.baseline_path) |path| {
                 try self.saveBaseline(results.items, path);
-                var buf: [256]u8 = undefined;
-                const msg = try std.fmt.bufPrint(&buf, "\n{s}Baseline saved to: {s}{s}\n", .{ Formatter.DIM, path, Formatter.RESET });
-                try stdout.writeAll(msg);
+                try stdout.print("\n{s}Baseline saved to: {s}{s}\n", .{ Formatter.DIM, path, Formatter.RESET });
             }
         }
+        try stdout.flush();
     }
 };
+
+/// Write results as a JSON array (one `BenchmarkResult.toJson` object per line).
+fn writeBaseline(allocator: Allocator, io: Io, results: []const BenchmarkResult, path: []const u8) !void {
+    const file = try Io.Dir.cwd().createFile(io, path, .{});
+    defer file.close(io);
+
+    var file_buf: [4096]u8 = undefined;
+    var file_writer = file.writer(io, &file_buf);
+    const w = &file_writer.interface;
+
+    try w.writeAll("[\n");
+    for (results, 0..) |result, i| {
+        const json = try result.toJson(allocator);
+        defer allocator.free(json);
+        try w.writeAll("  ");
+        try w.writeAll(json);
+        if (i < results.len - 1) {
+            try w.writeAll(",\n");
+        } else {
+            try w.writeAll("\n");
+        }
+    }
+    try w.writeAll("]\n");
+    try w.flush();
+}
 
 /// Formatter for beautiful CLI output with ANSI colors and formatting
 pub const Formatter = struct {
@@ -414,55 +433,36 @@ pub const Formatter = struct {
     pub const MAGENTA = "\x1b[35m"; // Magenta color
 
     /// Print the benchmark suite header
-    pub fn printHeader(self: Formatter, file: std.fs.File) !void {
+    pub fn printHeader(self: Formatter, w: *Io.Writer) !void {
         _ = self;
-        var buf: [256]u8 = undefined;
-        const msg1 = try std.fmt.bufPrint(&buf, "\n{s}{s}Zig Benchmark Suite{s}\n", .{ BOLD, CYAN, RESET });
-        try file.writeAll(msg1);
-        const msg2 = try std.fmt.bufPrint(&buf, "{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n\n", .{ DIM, RESET });
-        try file.writeAll(msg2);
+        try w.print("\n{s}{s}Zig Benchmark Suite{s}\n", .{ BOLD, CYAN, RESET });
+        try w.print("{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n\n", .{ DIM, RESET });
     }
 
-    pub fn printBenchmarkStart(self: Formatter, file: std.fs.File, name: []const u8) !void {
+    pub fn printBenchmarkStart(self: Formatter, w: *Io.Writer, name: []const u8) !void {
         _ = self;
-        var buf: [512]u8 = undefined;
-        const msg = try std.fmt.bufPrint(&buf, "{s}▶{s} Running: {s}{s}{s}\n", .{ BLUE, RESET, BOLD, name, RESET });
-        try file.writeAll(msg);
+        try w.print("{s}▶{s} Running: {s}{s}{s}\n", .{ BLUE, RESET, BOLD, name, RESET });
     }
 
-    pub fn printResult(self: Formatter, file: std.fs.File, result: *const BenchmarkResult) !void {
+    pub fn printResult(self: Formatter, w: *Io.Writer, result: *const BenchmarkResult) !void {
         _ = self;
-        var buf: [512]u8 = undefined;
-
-        var msg = try std.fmt.bufPrint(&buf, "  {s}Iterations:{s} {d}\n", .{ DIM, RESET, result.iterations });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "  {s}Mean:{s}       {s}{s}{s}\n", .{ DIM, RESET, GREEN, formatTime(result.mean).slice(), RESET });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "  {s}Std Dev:{s}    {s}\n", .{ DIM, RESET, formatTime(result.stddev).slice() });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "  {s}Min:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.min)).slice() });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "  {s}Max:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.max)).slice() });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "  {s}P50:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p50)).slice() });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "  {s}P75:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p75)).slice() });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "  {s}P99:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p99)).slice() });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "  {s}Ops/sec:{s}    {s}{s}{s}\n\n", .{ DIM, RESET, MAGENTA, formatOps(result.ops_per_sec).slice(), RESET });
-        try file.writeAll(msg);
+        try w.print("  {s}Iterations:{s} {d}\n", .{ DIM, RESET, result.iterations });
+        try w.print("  {s}Mean:{s}       {s}{s}{s}\n", .{ DIM, RESET, GREEN, formatTime(result.mean).slice(), RESET });
+        try w.print("  {s}Std Dev:{s}    {s}\n", .{ DIM, RESET, formatTime(result.stddev).slice() });
+        try w.print("  {s}Min:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.min)).slice() });
+        try w.print("  {s}Max:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.max)).slice() });
+        try w.print("  {s}P50:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p50)).slice() });
+        try w.print("  {s}P75:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p75)).slice() });
+        try w.print("  {s}P99:{s}        {s}\n", .{ DIM, RESET, formatTime(@floatFromInt(result.p99)).slice() });
+        try w.print("  {s}Ops/sec:{s}    {s}{s}{s}\n\n", .{ DIM, RESET, MAGENTA, formatOps(result.ops_per_sec).slice(), RESET });
     }
 
-    pub fn printSummary(self: Formatter, file: std.fs.File, results: []const BenchmarkResult) !void {
+    pub fn printSummary(self: Formatter, w: *Io.Writer, results: []const BenchmarkResult) !void {
         _ = self;
         if (results.len == 0) return;
 
-        var buf: [512]u8 = undefined;
-        var msg = try std.fmt.bufPrint(&buf, "{s}{s}Summary{s}\n", .{ BOLD, CYAN, RESET });
-        try file.writeAll(msg);
-        msg = try std.fmt.bufPrint(&buf, "{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n", .{ DIM, RESET });
-        try file.writeAll(msg);
+        try w.print("{s}{s}Summary{s}\n", .{ BOLD, CYAN, RESET });
+        try w.print("{s}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{s}\n", .{ DIM, RESET });
 
         // Find the fastest benchmark
         var fastest_idx: usize = 0;
@@ -479,7 +479,7 @@ pub const Formatter = struct {
             const relative = result.mean / fastest_mean;
 
             if (is_fastest) {
-                msg = try std.fmt.bufPrint(&buf, "  {s}✓{s} {s}{s}{s} - {s}fastest{s}\n", .{
+                try w.print("  {s}✓{s} {s}{s}{s} - {s}fastest{s}\n", .{
                     GREEN,
                     RESET,
                     BOLD,
@@ -488,9 +488,8 @@ pub const Formatter = struct {
                     GREEN,
                     RESET,
                 });
-                try file.writeAll(msg);
             } else {
-                msg = try std.fmt.bufPrint(&buf, "  {s}•{s} {s} - {s}{d:.2}x{s} slower\n", .{
+                try w.print("  {s}•{s} {s} - {s}{d:.2}x{s} slower\n", .{
                     YELLOW,
                     RESET,
                     result.name,
@@ -498,10 +497,9 @@ pub const Formatter = struct {
                     relative,
                     RESET,
                 });
-                try file.writeAll(msg);
             }
         }
-        try file.writeAll("\n");
+        try w.writeAll("\n");
     }
 
     const FormattedValue = struct {
@@ -545,18 +543,18 @@ pub const Formatter = struct {
 };
 
 // Convenience functions for quick benchmarking
-pub fn bench(name: []const u8, func: *const fn () void) !void {
+pub fn bench(io: Io, name: []const u8, func: *const fn () void) !void {
     const allocator = std.heap.page_allocator;
-    var suite = BenchmarkSuite.init(allocator);
+    var suite = BenchmarkSuite.init(allocator, io);
     defer suite.deinit();
 
     try suite.add(name, func);
     try suite.run();
 }
 
-pub fn benchWithOptions(name: []const u8, func: *const fn () void, opts: BenchmarkOptions) !void {
+pub fn benchWithOptions(io: Io, name: []const u8, func: *const fn () void, opts: BenchmarkOptions) !void {
     const allocator = std.heap.page_allocator;
-    var suite = BenchmarkSuite.init(allocator);
+    var suite = BenchmarkSuite.init(allocator, io);
     defer suite.deinit();
 
     try suite.addWithOptions(name, func, opts);
@@ -585,8 +583,8 @@ pub const AsyncBenchmark = struct {
         };
     }
 
-    pub fn run(self: *const AsyncBenchmark, allocator: Allocator) !BenchmarkResult {
-        var samples = std.ArrayList(u64){};
+    pub fn run(self: *const AsyncBenchmark, allocator: Allocator, io: Io) !BenchmarkResult {
+        var samples = std.ArrayList(u64).empty;
         errdefer samples.deinit(allocator);
 
         // Warmup phase
@@ -596,7 +594,7 @@ pub const AsyncBenchmark = struct {
         }
 
         // Benchmark phase
-        var timer = try Timer.start();
+        var timer = Timer.start(io);
         var total_time: u64 = 0;
         var iterations: u64 = 0;
 
@@ -649,13 +647,15 @@ pub const AsyncBenchmark = struct {
 pub const AsyncBenchmarkSuite = struct {
     benchmarks: std.ArrayList(AsyncBenchmark),
     allocator: Allocator,
+    io: Io,
     filter: ?[]const u8 = null,
     baseline_path: ?[]const u8 = null,
 
-    pub fn init(allocator: Allocator) AsyncBenchmarkSuite {
+    pub fn init(allocator: Allocator, io: Io) AsyncBenchmarkSuite {
         return .{
-            .benchmarks = std.ArrayList(AsyncBenchmark){},
+            .benchmarks = std.ArrayList(AsyncBenchmark).empty,
             .allocator = allocator,
+            .io = io,
         };
     }
 
@@ -685,31 +685,18 @@ pub const AsyncBenchmarkSuite = struct {
     }
 
     pub fn saveBaseline(self: *AsyncBenchmarkSuite, results: []const BenchmarkResult, path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
-
-        try file.writeAll("[\n");
-        for (results, 0..) |result, i| {
-            const json = try result.toJson(self.allocator);
-            defer self.allocator.free(json);
-            try file.writeAll("  ");
-            try file.writeAll(json);
-            if (i < results.len - 1) {
-                try file.writeAll(",\n");
-            } else {
-                try file.writeAll("\n");
-            }
-        }
-        try file.writeAll("]\n");
+        try writeBaseline(self.allocator, self.io, results, path);
     }
 
     pub fn run(self: *AsyncBenchmarkSuite) !void {
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         const formatter = Formatter{};
 
         try formatter.printHeader(stdout);
 
-        var results = std.ArrayList(BenchmarkResult){};
+        var results = std.ArrayList(BenchmarkResult).empty;
         defer {
             for (results.items) |*result| {
                 result.deinit();
@@ -723,7 +710,8 @@ pub const AsyncBenchmarkSuite = struct {
             }
 
             try formatter.printBenchmarkStart(stdout, benchmark.name);
-            const result = try benchmark.run(self.allocator);
+            try stdout.flush();
+            const result = try benchmark.run(self.allocator, self.io);
             try results.append(self.allocator, result);
             try formatter.printResult(stdout, &result);
         }
@@ -733,11 +721,10 @@ pub const AsyncBenchmarkSuite = struct {
 
             if (self.baseline_path) |path| {
                 try self.saveBaseline(results.items, path);
-                var buf: [256]u8 = undefined;
-                const msg = try std.fmt.bufPrint(&buf, "\n{s}Baseline saved to: {s}{s}\n", .{ Formatter.DIM, path, Formatter.RESET });
-                try stdout.writeAll(msg);
+                try stdout.print("\n{s}Baseline saved to: {s}{s}\n", .{ Formatter.DIM, path, Formatter.RESET });
             }
         }
+        try stdout.flush();
     }
 };
 
@@ -812,7 +799,7 @@ test "Stats.percentile - P75" {
 }
 
 test "Stats.percentile - P99" {
-    var samples = [_]u64{0} ** 100;
+    var samples: [100]u64 = @splat(0);
     for (&samples, 0..) |*s, i| {
         s.* = i + 1;
     }
@@ -928,7 +915,7 @@ test "Benchmark - withOptions" {
 test "BenchmarkResult - deinit" {
     const allocator = std.testing.allocator;
 
-    var samples = std.ArrayList(u64){};
+    var samples = std.ArrayList(u64).empty;
     try samples.append(allocator, 100);
     try samples.append(allocator, 200);
 
@@ -949,6 +936,10 @@ test "BenchmarkResult - deinit" {
 
     result.deinit();
     // If we get here without leaking, the test passes
+}
+
+test "clock" {
+    _ = clock;
 }
 
 test "Formatter - color constants" {

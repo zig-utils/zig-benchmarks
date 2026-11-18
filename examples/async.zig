@@ -14,7 +14,7 @@ const bench = @import("bench");
 var global_result: []u8 = undefined;
 
 fn asyncFileOperation() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -27,12 +27,12 @@ fn asyncFileOperation() !void {
 }
 
 fn asyncNetworkSimulation() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     // Simulate async network operations
-    var data = std.ArrayList(u8){};
+    var data = std.ArrayList(u8).empty;
     defer data.deinit(allocator);
 
     var i: usize = 0;
@@ -44,7 +44,7 @@ fn asyncNetworkSimulation() !void {
 }
 
 fn asyncJsonParsing() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -62,10 +62,10 @@ fn asyncJsonParsing() !void {
     global_result = @constCast(json_str[0..10]);
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
-    var suite = bench.AsyncBenchmarkSuite.init(allocator);
+    var suite = bench.AsyncBenchmarkSuite.init(allocator, init.io);
     defer suite.deinit();
 
     try suite.add("Async File Operations", asyncFileOperation);

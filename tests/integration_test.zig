@@ -36,7 +36,7 @@ fn mediumBenchmark() void {
 
 test "BenchmarkSuite - init and deinit" {
     const allocator = testing.allocator;
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     try testing.expectEqual(@as(usize, 0), suite.benchmarks.items.len);
@@ -44,7 +44,7 @@ test "BenchmarkSuite - init and deinit" {
 
 test "BenchmarkSuite - add single benchmark" {
     const allocator = testing.allocator;
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     try suite.add("Simple Test", simpleBenchmark);
@@ -54,7 +54,7 @@ test "BenchmarkSuite - add single benchmark" {
 
 test "BenchmarkSuite - add multiple benchmarks" {
     const allocator = testing.allocator;
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     try suite.add("Test 1", simpleBenchmark);
@@ -66,7 +66,7 @@ test "BenchmarkSuite - add multiple benchmarks" {
 
 test "BenchmarkSuite - add with custom options" {
     const allocator = testing.allocator;
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     const opts = bench.BenchmarkOptions{
@@ -84,7 +84,7 @@ test "BenchmarkSuite - add with custom options" {
 
 test "BenchmarkSuite - filter benchmarks by name" {
     const allocator = testing.allocator;
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     try suite.add("Fast Operation", fastBenchmark);
@@ -105,7 +105,7 @@ test "BenchmarkSuite - filter benchmarks by name" {
 
 test "BenchmarkSuite - filter with no matches" {
     const allocator = testing.allocator;
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     try suite.add("Operation A", fastBenchmark);
@@ -119,7 +119,7 @@ test "BenchmarkSuite - filter with no matches" {
 
 test "BenchmarkSuite - no filter matches all" {
     const allocator = testing.allocator;
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     try suite.add("Test 1", fastBenchmark);
@@ -143,7 +143,7 @@ test "Benchmark - run produces valid result" {
     };
 
     var benchmark = bench.Benchmark.withOptions("Test", mediumBenchmark, opts);
-    var result = try benchmark.run(allocator);
+    var result = try benchmark.run(allocator, std.testing.io);
     defer result.deinit();
 
     // Verify result has reasonable values
@@ -181,7 +181,7 @@ test "Benchmark - run with allocator function" {
     };
 
     var benchmark = bench.Benchmark.withAllocatorAndOptions("Allocator Test", AllocatorBench.benchFunc, opts);
-    var result = try benchmark.run(allocator);
+    var result = try benchmark.run(allocator, std.testing.io);
     defer result.deinit();
 
     try testing.expect(result.iterations >= 5);
@@ -199,7 +199,7 @@ test "Benchmark - respects min_iterations" {
     };
 
     var benchmark = bench.Benchmark.withOptions("Min Iterations Test", simpleBenchmark, opts);
-    var result = try benchmark.run(allocator);
+    var result = try benchmark.run(allocator, std.testing.io);
     defer result.deinit();
 
     // Should run at least min_iterations (may run more if time hasn't elapsed)
@@ -217,7 +217,7 @@ test "Benchmark - respects max_iterations" {
     };
 
     var benchmark = bench.Benchmark.withOptions("Max Iterations Test", fastBenchmark, opts);
-    var result = try benchmark.run(allocator);
+    var result = try benchmark.run(allocator, std.testing.io);
     defer result.deinit();
 
     // Should not exceed max_iterations
@@ -235,7 +235,7 @@ test "BenchmarkResult - name is preserved" {
     };
 
     var benchmark = bench.Benchmark.withOptions("My Custom Benchmark", fastBenchmark, opts);
-    var result = try benchmark.run(allocator);
+    var result = try benchmark.run(allocator, std.testing.io);
     defer result.deinit();
 
     try testing.expectEqualStrings("My Custom Benchmark", result.name);
@@ -252,7 +252,7 @@ test "BenchmarkResult - samples array is populated" {
     };
 
     var benchmark = bench.Benchmark.withOptions("Samples Test", mediumBenchmark, opts);
-    var result = try benchmark.run(allocator);
+    var result = try benchmark.run(allocator, std.testing.io);
     defer result.deinit();
 
     // Samples should match iterations
@@ -289,7 +289,7 @@ test "AsyncBenchmark - error handling function" {
     };
 
     var benchmark = bench.AsyncBenchmark.withOptions("Async Test", AsyncTestFn.asyncFunc, opts);
-    var result = try benchmark.run(allocator);
+    var result = try benchmark.run(allocator, std.testing.io);
     defer result.deinit();
 
     try testing.expect(result.iterations >= 5);
@@ -308,7 +308,7 @@ test "AsyncBenchmarkSuite - multiple async benchmarks" {
         }
     };
 
-    var suite = bench.AsyncBenchmarkSuite.init(allocator);
+    var suite = bench.AsyncBenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     try suite.add("Async 1", AsyncFns.func1);
@@ -320,7 +320,7 @@ test "AsyncBenchmarkSuite - multiple async benchmarks" {
 test "Integration - full benchmark suite workflow" {
     const allocator = testing.allocator;
 
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, std.testing.io);
     defer suite.deinit();
 
     // Add multiple benchmarks
@@ -341,7 +341,7 @@ test "Integration - full benchmark suite workflow" {
     // Note: We can't call suite.run() here as it writes to stdout
     // But we can verify individual benchmarks work
     for (suite.benchmarks.items) |*benchmark| {
-        var result = try benchmark.run(allocator);
+        var result = try benchmark.run(allocator, std.testing.io);
         defer result.deinit();
 
         try testing.expect(result.iterations > 0);

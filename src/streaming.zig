@@ -10,6 +10,7 @@
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// Streaming output format
 pub const StreamFormat = enum {
@@ -45,21 +46,23 @@ pub const StreamCallback = *const fn (event: StreamEvent) void;
 
 /// File-based streaming writer
 pub const FileStreamer = struct {
-    file: std.fs.File,
+    file: Io.File,
     format: StreamFormat,
     allocator: Allocator,
+    io: Io,
 
-    pub fn init(allocator: Allocator, path: []const u8, format: StreamFormat) !FileStreamer {
-        const file = try std.fs.cwd().createFile(path, .{});
+    pub fn init(allocator: Allocator, io: Io, path: []const u8, format: StreamFormat) !FileStreamer {
+        const file = try Io.Dir.cwd().createFile(io, path, .{});
         return .{
             .file = file,
             .format = format,
             .allocator = allocator,
+            .io = io,
         };
     }
 
     pub fn deinit(self: *FileStreamer) void {
-        self.file.close();
+        self.file.close(self.io);
     }
 
     /// Write event to file stream
@@ -76,34 +79,33 @@ pub const FileStreamer = struct {
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const temp_alloc = fba.allocator();
 
-        var string = std.ArrayList(u8){};
+        var string = std.ArrayList(u8).empty;
         defer string.deinit(temp_alloc);
 
-        const writer = string.writer(temp_alloc);
-        try writer.writeAll("{");
-        try writer.print("\"event_type\":\"{s}\",", .{@tagName(event.event_type)});
-        try writer.print("\"timestamp\":{d}", .{event.timestamp});
+        try string.appendSlice(temp_alloc, "{");
+        try string.print(temp_alloc, "\"event_type\":\"{s}\",", .{@tagName(event.event_type)});
+        try string.print(temp_alloc, "\"timestamp\":{d}", .{event.timestamp});
 
         if (event.benchmark_name) |name| {
-            try writer.print(",\"benchmark\":\"{s}\"", .{name});
+            try string.print(temp_alloc, ",\"benchmark\":\"{s}\"", .{name});
         }
         if (event.iteration) |iter| {
-            try writer.print(",\"iteration\":{d}", .{iter});
+            try string.print(temp_alloc, ",\"iteration\":{d}", .{iter});
         }
         if (event.duration_ns) |dur| {
-            try writer.print(",\"duration_ns\":{d}", .{dur});
+            try string.print(temp_alloc, ",\"duration_ns\":{d}", .{dur});
         }
         if (event.result) |result| {
-            try writer.print(",\"mean_ns\":{d}", .{result.mean_ns});
-            try writer.print(",\"ops_per_sec\":{d:.2}", .{result.ops_per_sec});
+            try string.print(temp_alloc, ",\"mean_ns\":{d}", .{result.mean});
+            try string.print(temp_alloc, ",\"ops_per_sec\":{d:.2}", .{result.ops_per_sec});
         }
         if (event.error_message) |msg| {
-            try writer.print(",\"error\":\"{s}\"", .{msg});
+            try string.print(temp_alloc, ",\"error\":\"{s}\"", .{msg});
         }
 
-        try writer.writeAll("}\n");
+        try string.appendSlice(temp_alloc, "}\n");
 
-        try self.file.writeAll(string.items);
+        try self.file.writeStreamingAll(self.io, string.items);
     }
 
     fn writeCSV(self: *FileStreamer, event: StreamEvent) !void {
@@ -115,16 +117,16 @@ pub const FileStreamer = struct {
             event.iteration orelse 0,
             event.duration_ns orelse 0,
         });
-        try self.file.writeAll(line);
+        try self.file.writeStreamingAll(self.io, line);
     }
 };
 
 /// SSE (Server-Sent Events) streamer for HTTP
 pub const SSEStreamer = struct {
-    writer: std.fs.File.Writer,
+    writer: *Io.Writer,
     allocator: Allocator,
 
-    pub fn init(allocator: Allocator, writer: std.fs.File.Writer) SSEStreamer {
+    pub fn init(allocator: Allocator, writer: *Io.Writer) SSEStreamer {
         return .{
             .writer = writer,
             .allocator = allocator,
@@ -136,24 +138,24 @@ pub const SSEStreamer = struct {
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const temp_alloc = fba.allocator();
 
-        var data = std.ArrayList(u8){};
+        var data = std.ArrayList(u8).empty;
         defer data.deinit(temp_alloc);
 
-        const writer = data.writer(temp_alloc);
-        try writer.print("event: {s}\n", .{@tagName(event.event_type)});
-        try writer.writeAll("data: {");
-        try writer.print("\"timestamp\":{d}", .{event.timestamp});
+        try data.print(temp_alloc, "event: {s}\n", .{@tagName(event.event_type)});
+        try data.appendSlice(temp_alloc, "data: {");
+        try data.print(temp_alloc, "\"timestamp\":{d}", .{event.timestamp});
 
         if (event.benchmark_name) |name| {
-            try writer.print(",\"benchmark\":\"{s}\"", .{name});
+            try data.print(temp_alloc, ",\"benchmark\":\"{s}\"", .{name});
         }
         if (event.duration_ns) |dur| {
-            try writer.print(",\"duration_ns\":{d}", .{dur});
+            try data.print(temp_alloc, ",\"duration_ns\":{d}", .{dur});
         }
 
-        try writer.writeAll("}\n\n");
+        try data.appendSlice(temp_alloc, "}\n\n");
 
         try self.writer.writeAll(data.items);
+        try self.writer.flush();
     }
 };
 
@@ -164,11 +166,11 @@ pub const StreamingSuite = struct {
     callbacks: std.ArrayList(StreamCallback),
     allocator: Allocator,
 
-    pub fn init(allocator: Allocator) StreamingSuite {
+    pub fn init(allocator: Allocator, io: Io) StreamingSuite {
         return .{
-            .suite = bench.BenchmarkSuite.init(allocator),
-            .streamers = std.ArrayList(*FileStreamer){},
-            .callbacks = std.ArrayList(StreamCallback){},
+            .suite = bench.BenchmarkSuite.init(allocator, io),
+            .streamers = std.ArrayList(*FileStreamer).empty,
+            .callbacks = std.ArrayList(StreamCallback).empty,
             .allocator = allocator,
         };
     }
@@ -186,7 +188,7 @@ pub const StreamingSuite = struct {
     /// Add a file streamer
     pub fn addFileStreamer(self: *StreamingSuite, path: []const u8, format: StreamFormat) !void {
         const streamer = try self.allocator.create(FileStreamer);
-        streamer.* = try FileStreamer.init(self.allocator, path, format);
+        streamer.* = try FileStreamer.init(self.allocator, self.suite.io, path, format);
         try self.streamers.append(self.allocator, streamer);
     }
 
@@ -219,7 +221,7 @@ pub const StreamingSuite = struct {
     pub fn run(self: *StreamingSuite) !void {
         const suite_start_event = StreamEvent{
             .event_type = .suite_started,
-            .timestamp = std.time.milliTimestamp(),
+            .timestamp = bench.clock.milliTimestamp(self.suite.io),
         };
         self.emitEvent(suite_start_event);
 
@@ -230,7 +232,7 @@ pub const StreamingSuite = struct {
 
         const suite_complete_event = StreamEvent{
             .event_type = .suite_complete,
-            .timestamp = std.time.milliTimestamp(),
+            .timestamp = bench.clock.milliTimestamp(self.suite.io),
         };
         self.emitEvent(suite_complete_event);
     }
@@ -242,13 +244,15 @@ pub const ProgressIndicator = struct {
     completed_benchmarks: usize,
     current_benchmark: ?[]const u8,
     start_time: i64,
+    io: Io,
 
-    pub fn init(total: usize) ProgressIndicator {
+    pub fn init(io: Io, total: usize) ProgressIndicator {
         return .{
             .total_benchmarks = total,
             .completed_benchmarks = 0,
             .current_benchmark = null,
-            .start_time = std.time.milliTimestamp(),
+            .start_time = bench.clock.milliTimestamp(io),
+            .io = io,
         };
     }
 
@@ -267,7 +271,7 @@ pub const ProgressIndicator = struct {
 
     fn printProgress(self: *ProgressIndicator) void {
         const percent = (@as(f64, @floatFromInt(self.completed_benchmarks)) / @as(f64, @floatFromInt(self.total_benchmarks))) * 100.0;
-        const elapsed = std.time.milliTimestamp() - self.start_time;
+        const elapsed = bench.clock.milliTimestamp(self.io) - self.start_time;
         std.debug.print("Progress: {d:.1}% ({d}/{d}) - Elapsed: {d}ms\n", .{
             percent,
             self.completed_benchmarks,

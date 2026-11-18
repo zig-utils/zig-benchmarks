@@ -39,7 +39,7 @@ fn benchArrayAllocation() void {
 }
 
 fn benchHashMapOperations() void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -60,11 +60,11 @@ fn benchHashMapOperations() void {
 }
 
 fn benchStringConcatenation() void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var list = std.ArrayList(u8){};
+    var list = std.ArrayList(u8).empty;
     defer list.deinit(allocator);
 
     var i: u32 = 0;
@@ -74,10 +74,10 @@ fn benchStringConcatenation() void {
     global_counter = list.items.len;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, init.io);
     defer suite.deinit();
 
     try suite.add("Fibonacci(20)", benchFib20);

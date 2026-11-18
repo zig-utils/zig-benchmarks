@@ -51,12 +51,15 @@ fn arrayOperation(size: usize) void {
     std.mem.doNotOptimizeAway(&sum);
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const stdout = std.fs.File.stdout();
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
+    const stdout = &stdout_writer.interface;
     var buf: [512]u8 = undefined;
 
     const header = try std.fmt.bufPrint(&buf, "\n{s}=== Phase 2 Advanced Features Demo ==={s}\n\n", .{
@@ -72,7 +75,7 @@ pub fn main() !void {
     });
     try stdout.writeAll(section1);
 
-    var manager = groups.GroupManager.init(allocator);
+    var manager = groups.GroupManager.init(allocator, io);
     defer manager.deinit();
 
     // Create algorithm comparison group
@@ -103,7 +106,7 @@ pub fn main() !void {
 
     const detector = warmup.WarmupDetector.init(warmup_config);
 
-    const warmup_result = try detector.detect(mediumOperation, allocator);
+    const warmup_result = try detector.detect(mediumOperation, allocator, io);
     const warmup_line1 = try std.fmt.bufPrint(&buf, "  Detected optimal warmup: {d} iterations\n", .{warmup_result.optimal_iterations});
     try stdout.writeAll(warmup_line1);
     const warmup_line2 = try std.fmt.bufPrint(&buf, "  Coefficient of variation: {d:.4}\n", .{warmup_result.final_cv});
@@ -157,6 +160,7 @@ pub fn main() !void {
     const sizes = [_]usize{ 100, 1000, 10000 };
     const param_bench = parameterized.ParameterizedBenchmark(usize).init(
         allocator,
+        io,
         "Array Size {d}",
         arrayOperation,
         &sizes,
@@ -183,6 +187,7 @@ pub fn main() !void {
 
     const parallel_bench = parallel.ParallelBenchmark.init(
         allocator,
+        io,
         "Parallel Fast Operation",
         fastOperation,
         parallel_config,
@@ -191,7 +196,7 @@ pub fn main() !void {
     var parallel_result = try parallel_bench.run();
     defer parallel_result.deinit();
 
-    try parallel.ParallelBenchmark.printResult(&parallel_result);
+    try parallel.ParallelBenchmark.printResult(io, &parallel_result);
     try stdout.writeAll("\n");
 
     // 6. Scalability Testing
@@ -204,6 +209,7 @@ pub fn main() !void {
     const thread_counts = [_]usize{ 1, 2, 4, 8 };
     const scalability_test = parallel.ScalabilityTest.init(
         allocator,
+        io,
         "Medium Operation Scalability",
         mediumOperation,
         &thread_counts,

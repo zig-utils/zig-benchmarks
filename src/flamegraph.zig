@@ -8,18 +8,20 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// Generator for flamegraph-compatible output and profiling instructions
 pub const FlamegraphGenerator = struct {
     allocator: Allocator,
+    io: Io,
 
-    pub fn init(allocator: Allocator) FlamegraphGenerator {
-        return .{ .allocator = allocator };
+    pub fn init(allocator: Allocator, io: Io) FlamegraphGenerator {
+        return .{ .allocator = allocator, .io = io };
     }
 
     /// Generate instructions for creating a flamegraph from benchmark results
     /// This provides the command-line instructions to use with external profiling tools
-    pub fn generateInstructions(self: FlamegraphGenerator, writer: std.fs.File, executable_name: []const u8) !void {
+    pub fn generateInstructions(self: FlamegraphGenerator, writer: *Io.Writer, executable_name: []const u8) !void {
         _ = self;
 
         try writer.writeAll("\n");
@@ -58,7 +60,7 @@ pub const FlamegraphGenerator = struct {
 
     /// Generate a simple text-based call tree representation
     /// This is a simplified alternative to flamegraphs that doesn't require external tools
-    pub fn generateCallTree(self: FlamegraphGenerator, writer: std.fs.File, benchmark_name: []const u8, execution_time_ns: u64) !void {
+    pub fn generateCallTree(self: FlamegraphGenerator, writer: *Io.Writer, benchmark_name: []const u8, execution_time_ns: u64) !void {
         _ = self;
 
         try writer.writeAll("\n");
@@ -85,8 +87,8 @@ pub const FlamegraphGenerator = struct {
     /// Generate flamegraph-compatible folded stack format from benchmark results
     /// This creates a simple representation that can be fed to flamegraph.pl
     pub fn generateFoldedStacks(self: FlamegraphGenerator, file_path: []const u8, benchmark_name: []const u8, execution_count: usize) !void {
-        const file = try std.fs.cwd().createFile(file_path, .{});
-        defer file.close();
+        const file = try Io.Dir.cwd().createFile(self.io, file_path, .{});
+        defer file.close(self.io);
 
         var buf: [512]u8 = undefined;
 
@@ -96,51 +98,50 @@ pub const FlamegraphGenerator = struct {
             benchmark_name,
             execution_count,
         });
-        try file.writeAll(line);
+        try file.writeStreamingAll(self.io, line);
 
         // Write completion message
-        const stdout = std.fs.File.stdout();
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         const msg = try std.fmt.bufPrint(&buf, "✓ Folded stacks written to: {s}\n", .{file_path});
         try stdout.writeAll(msg);
         try stdout.writeAll("  To generate flamegraph: flamegraph.pl ");
         try stdout.writeAll(file_path);
         try stdout.writeAll(" > flamegraph.svg\n");
-
-        _ = self;
+        try stdout.flush();
     }
 };
 
 /// Integration helper for profiling tools
 pub const ProfilerIntegration = struct {
-    pub fn detectAvailableProfilers(allocator: Allocator) ![]const []const u8 {
-        var profilers = std.ArrayList([]const u8){};
+    pub fn detectAvailableProfilers(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map) ![]const []const u8 {
+        var profilers = std.ArrayList([]const u8).empty;
 
         // Check for perf (Linux)
-        if (std.process.hasEnvVarConstant("PATH")) {
-            const result = std.process.Child.run(.{
-                .allocator = allocator,
+        if (environ_map.contains("PATH")) {
+            const result = std.process.run(allocator, io, .{
                 .argv = &[_][]const u8{ "which", "perf" },
             }) catch null;
 
             if (result) |r| {
                 defer allocator.free(r.stdout);
                 defer allocator.free(r.stderr);
-                if (r.term.Exited == 0) {
+                if (r.term == .exited and r.term.exited == 0) {
                     try profilers.append(allocator, "perf");
                 }
             }
         }
 
         // Check for Instruments (macOS)
-        const result = std.process.Child.run(.{
-            .allocator = allocator,
+        const result = std.process.run(allocator, io, .{
             .argv = &[_][]const u8{ "which", "xcrun" },
         }) catch null;
 
         if (result) |r| {
             defer allocator.free(r.stdout);
             defer allocator.free(r.stderr);
-            if (r.term.Exited == 0) {
+            if (r.term == .exited and r.term.exited == 0) {
                 try profilers.append(allocator, "instruments");
             }
         }

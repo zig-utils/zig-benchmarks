@@ -1,7 +1,8 @@
 const std = @import("std");
-const Timer = std.time.Timer;
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const bench = @import("bench.zig");
+const Timer = bench.Timer;
 
 pub const AsyncBenchmark = struct {
     name: []const u8,
@@ -24,8 +25,8 @@ pub const AsyncBenchmark = struct {
         };
     }
 
-    pub fn run(self: *const AsyncBenchmark, allocator: Allocator) !bench.BenchmarkResult {
-        var samples = std.ArrayList(u64){};
+    pub fn run(self: *const AsyncBenchmark, allocator: Allocator, io: Io) !bench.BenchmarkResult {
+        var samples = std.ArrayList(u64).empty;
         errdefer samples.deinit(allocator);
 
         // Warmup phase
@@ -35,7 +36,7 @@ pub const AsyncBenchmark = struct {
         }
 
         // Benchmark phase
-        var timer = try Timer.start();
+        var timer = Timer.start(io);
         var total_time: u64 = 0;
         var iterations: u64 = 0;
 
@@ -71,6 +72,7 @@ pub const AsyncBenchmark = struct {
         return bench.BenchmarkResult{
             .name = self.name,
             .samples = samples,
+            .allocator = allocator,
             .mean = mean_val,
             .stddev = stddev_val,
             .min = min_val,
@@ -87,11 +89,13 @@ pub const AsyncBenchmark = struct {
 pub const AsyncBenchmarkSuite = struct {
     benchmarks: std.ArrayList(AsyncBenchmark),
     allocator: Allocator,
+    io: Io,
 
-    pub fn init(allocator: Allocator) AsyncBenchmarkSuite {
+    pub fn init(allocator: Allocator, io: Io) AsyncBenchmarkSuite {
         return .{
-            .benchmarks = std.ArrayList(AsyncBenchmark){},
+            .benchmarks = std.ArrayList(AsyncBenchmark).empty,
             .allocator = allocator,
+            .io = io,
         };
     }
 
@@ -108,12 +112,14 @@ pub const AsyncBenchmarkSuite = struct {
     }
 
     pub fn run(self: *AsyncBenchmarkSuite) !void {
-        const stdout = std.io.getStdOut().writer();
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(self.io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         const formatter = bench.Formatter{};
 
         try formatter.printHeader(stdout);
 
-        var results = std.ArrayList(bench.BenchmarkResult){};
+        var results = std.ArrayList(bench.BenchmarkResult).empty;
         defer {
             for (results.items) |*result| {
                 result.deinit();
@@ -123,11 +129,13 @@ pub const AsyncBenchmarkSuite = struct {
 
         for (self.benchmarks.items) |*benchmark| {
             try formatter.printBenchmarkStart(stdout, benchmark.name);
-            const result = try benchmark.run(self.allocator);
+            try stdout.flush();
+            const result = try benchmark.run(self.allocator, self.io);
             try results.append(self.allocator, result);
             try formatter.printResult(stdout, &result);
         }
 
         try formatter.printSummary(stdout, results.items);
+        try stdout.flush();
     }
 };

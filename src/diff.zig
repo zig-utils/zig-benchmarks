@@ -10,14 +10,15 @@
 const std = @import("std");
 const bench = @import("bench");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// Difference type
 pub const DiffType = enum {
-    improved,    // Performance got better (faster)
-    regressed,   // Performance got worse (slower)
-    unchanged,   // No significant change
-    added,       // New benchmark
-    removed,     // Benchmark removed
+    improved, // Performance got better (faster)
+    regressed, // Performance got worse (slower)
+    unchanged, // No significant change
+    added, // New benchmark
+    removed, // Benchmark removed
 };
 
 /// Benchmark comparison result
@@ -66,31 +67,29 @@ pub const DiffConfig = struct {
 pub const DiffViewer = struct {
     config: DiffConfig,
     allocator: Allocator,
+    io: Io,
 
-    pub fn init(allocator: Allocator, config: DiffConfig) DiffViewer {
+    pub fn init(allocator: Allocator, io: Io, config: DiffConfig) DiffViewer {
         return .{
             .config = config,
             .allocator = allocator,
+            .io = io,
         };
     }
 
     /// Compare two JSON result files
     pub fn compareFiles(self: *DiffViewer, old_path: []const u8, new_path: []const u8) !DiffResult {
         // Read old results
-        const old_file = try std.fs.cwd().openFile(old_path, .{});
-        defer old_file.close();
-        const old_content = try old_file.readToEndAlloc(self.allocator, 1024 * 1024);
+        const old_content = try Io.Dir.cwd().readFileAlloc(self.io, old_path, self.allocator, .limited(1024 * 1024));
         defer self.allocator.free(old_content);
 
         // Read new results
-        const new_file = try std.fs.cwd().openFile(new_path, .{});
-        defer new_file.close();
-        const new_content = try new_file.readToEndAlloc(self.allocator, 1024 * 1024);
+        const new_content = try Io.Dir.cwd().readFileAlloc(self.io, new_path, self.allocator, .limited(1024 * 1024));
         defer self.allocator.free(new_content);
 
         // Parse JSON (simplified - in real implementation use std.json)
         // For now, return a mock result
-        var diffs = std.ArrayList(BenchmarkDiff){};
+        var diffs = std.ArrayList(BenchmarkDiff).empty;
 
         // This is a placeholder - actual implementation would parse JSON
         // In a full implementation, we would parse old_content and new_content here
@@ -116,7 +115,7 @@ pub const DiffViewer = struct {
         old_results: std.StringHashMap(f64),
         new_results: std.StringHashMap(f64),
     ) !DiffResult {
-        var diffs = std.ArrayList(BenchmarkDiff){};
+        var diffs = std.ArrayList(BenchmarkDiff).empty;
         var improved: usize = 0;
         var regressed: usize = 0;
         var unchanged: usize = 0;
@@ -214,8 +213,10 @@ pub const DiffViewer = struct {
     }
 
     /// Print diff results
-    pub fn printDiff(result: *const DiffResult) !void {
-        const stdout = std.fs.File.stdout();
+    pub fn printDiff(io: Io, result: *const DiffResult) !void {
+        var stdout_buf: [512]u8 = undefined;
+        var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buf);
+        const stdout = &stdout_writer.interface;
         var buf: [512]u8 = undefined;
 
         const header = try std.fmt.bufPrint(&buf, "\n{s}=== Benchmark Diff Report ==={s}\n\n", .{
@@ -279,12 +280,12 @@ pub const DiffViewer = struct {
         try stdout.writeAll(details_header);
 
         for (result.diffs) |diff| {
-            try printBenchmarkDiff(&diff);
+            try printBenchmarkDiff(stdout, &diff);
         }
+        try stdout.flush();
     }
 
-    fn printBenchmarkDiff(diff: *const BenchmarkDiff) !void {
-        const stdout = std.fs.File.stdout();
+    fn printBenchmarkDiff(stdout: *Io.Writer, diff: *const BenchmarkDiff) !void {
         var buf: [512]u8 = undefined;
 
         const symbol = switch (diff.diff_type) {

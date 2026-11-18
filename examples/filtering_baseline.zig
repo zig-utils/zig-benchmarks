@@ -41,11 +41,11 @@ fn arrayOperation() void {
 }
 
 fn stringOperation() void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var list = std.ArrayList(u8){};
+    var list = std.ArrayList(u8).empty;
     defer list.deinit(allocator);
 
     var i: u32 = 0;
@@ -55,14 +55,14 @@ fn stringOperation() void {
     global_sum = list.items.len;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
     // Parse command line arguments
-    var args = std.process.args();
+    var args = init.minimal.args.iterate();
     _ = args.skip(); // Skip program name
 
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, init.io);
     defer suite.deinit();
 
     // Add all benchmarks

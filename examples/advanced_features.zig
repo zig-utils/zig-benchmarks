@@ -50,7 +50,7 @@ fn slowBenchmark() void {
 }
 
 fn memoryIntensiveBenchmark(allocator: std.mem.Allocator) void {
-    var list = std.ArrayList(u64){};
+    var list = std.ArrayList(u64).empty;
     defer list.deinit(allocator);
 
     var i: usize = 0;
@@ -60,13 +60,15 @@ fn memoryIntensiveBenchmark(allocator: std.mem.Allocator) void {
     global_sum = list.items.len;
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     // Run benchmarks
-    var suite = bench.BenchmarkSuite.init(allocator);
+    var suite = bench.BenchmarkSuite.init(allocator, io);
     defer suite.deinit();
 
     try suite.add("Fast Benchmark", fastBenchmark);
@@ -78,7 +80,7 @@ pub fn main() !void {
 
     // Note: We can't easily access the results from suite.run(), so we'll run them again
     // In a real implementation, you'd modify BenchmarkSuite.run() to return results
-    var results = std.ArrayList(bench.BenchmarkResult){};
+    var results = std.ArrayList(bench.BenchmarkResult).empty;
     defer {
         for (results.items) |*result| {
             result.deinit();
@@ -87,13 +89,13 @@ pub fn main() !void {
     }
 
     for (suite.benchmarks.items) |*benchmark| {
-        const result = try benchmark.run(allocator);
+        const result = try benchmark.run(allocator, io);
         try results.append(allocator, result);
     }
 
     // 1. Export to JSON
     std.debug.print("\n{s}=== Exporting Results ==={s}\n", .{ bench.Formatter.BOLD, bench.Formatter.RESET });
-    const exporter = export_mod.Exporter.init(allocator);
+    const exporter = export_mod.Exporter.init(allocator, io);
     try exporter.exportToFile(results.items, "benchmark_results.json", .json);
     std.debug.print("✓ Exported to JSON: benchmark_results.json\n", .{});
 
@@ -105,17 +107,17 @@ pub fn main() !void {
     std.debug.print("\n{s}=== Baseline Comparison ==={s}\n", .{ bench.Formatter.BOLD, bench.Formatter.RESET });
 
     const baseline_exists = blk: {
-        std.fs.cwd().access("baseline.json", .{}) catch break :blk false;
+        std.Io.Dir.cwd().access(io, "baseline.json", .{}) catch break :blk false;
         break :blk true;
     };
 
     if (baseline_exists) {
-        const comparator = comparison_mod.Comparator.init(allocator, 10.0);
+        const comparator = comparison_mod.Comparator.init(allocator, io, 10.0);
         const comparisons = try comparator.compare(results.items, "baseline.json");
         defer allocator.free(comparisons);
 
-        const stdout = std.fs.File.stdout();
-        try comparator.printComparison(stdout, comparisons);
+        var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
+        try comparator.printComparison(&stdout_writer.interface, comparisons);
     } else {
         std.debug.print("No baseline found. Run with baseline.json to enable comparison.\n", .{});
         std.debug.print("Creating baseline from current results...\n", .{});
@@ -130,7 +132,7 @@ pub fn main() !void {
     const tracked_allocator = profiling_allocator.allocator();
 
     // Run a memory-intensive benchmark
-    var timer = try std.time.Timer.start();
+    var timer = bench.Timer.start(io);
     memoryIntensiveBenchmark(tracked_allocator);
     const elapsed = timer.read();
 
@@ -140,16 +142,17 @@ pub fn main() !void {
         .memory_stats = profiling_allocator.getStats(),
     };
 
-    const stdout = std.fs.File.stdout();
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
+    const stdout = &stdout_writer.interface;
     try mem_result.print(stdout);
 
     // 5. CI/CD Integration Demo
     std.debug.print("\n{s}=== CI/CD Integration Demo ==={s}\n", .{ bench.Formatter.BOLD, bench.Formatter.RESET });
 
-    const ci_format = ci.detectCIEnvironment();
+    const ci_format = ci.detectCIEnvironment(init.environ_map);
     std.debug.print("Detected CI environment: {s}\n", .{@tagName(ci_format)});
 
-    var ci_helper = ci.CIHelper.init(allocator, .{
+    var ci_helper = ci.CIHelper.init(allocator, io, .{
         .fail_on_regression = true,
         .regression_threshold = 10.0,
         .baseline_path = if (baseline_exists) "baseline.json" else null,
@@ -169,7 +172,7 @@ pub fn main() !void {
     // 6. Flamegraph Support Demo
     std.debug.print("\n{s}=== Flamegraph Support Demo ==={s}\n", .{ bench.Formatter.BOLD, bench.Formatter.RESET });
 
-    const flamegraph_gen = flamegraph_mod.FlamegraphGenerator.init(allocator);
+    const flamegraph_gen = flamegraph_mod.FlamegraphGenerator.init(allocator, io);
 
     // Generate folded stack format
     try flamegraph_gen.generateFoldedStacks("benchmark.folded", "Fast Benchmark", 10000);

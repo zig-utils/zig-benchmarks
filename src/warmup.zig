@@ -49,11 +49,11 @@ pub const WarmupDetector = struct {
     }
 
     /// Detect optimal warmup iterations for a function
-    pub fn detect(self: *const WarmupDetector, func: *const fn () void, allocator: std.mem.Allocator) !WarmupResult {
-        var samples = std.ArrayList(u64){};
+    pub fn detect(self: *const WarmupDetector, func: *const fn () void, allocator: std.mem.Allocator, io: std.Io) !WarmupResult {
+        var samples = std.ArrayList(u64).empty;
         defer samples.deinit(allocator);
 
-        var timer = try std.time.Timer.start();
+        var timer = bench.Timer.start(io);
 
         // Run initial min_warmup_iterations
         var i: u32 = 0;
@@ -129,9 +129,10 @@ pub fn applyAutoWarmup(
     func: *const fn () void,
     base_opts: bench.BenchmarkOptions,
     allocator: std.mem.Allocator,
+    io: std.Io,
 ) !bench.BenchmarkOptions {
     const detector = WarmupDetector.initDefault();
-    const result = try detector.detect(func, allocator);
+    const result = try detector.detect(func, allocator, io);
 
     var opts = base_opts;
     opts.warmup_iterations = result.optimal_iterations;
@@ -143,11 +144,12 @@ pub fn detectWithAllocator(
     detector: *const WarmupDetector,
     func: *const fn (std.mem.Allocator) void,
     allocator: std.mem.Allocator,
+    io: std.Io,
 ) !WarmupResult {
-    var samples = std.ArrayList(u64){};
+    var samples = std.ArrayList(u64).empty;
     defer samples.deinit(allocator);
 
-    var timer = try std.time.Timer.start();
+    var timer = bench.Timer.start(io);
 
     // Run initial min_warmup_iterations
     var i: u32 = 0;
