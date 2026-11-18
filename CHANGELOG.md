@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.2 - 2026-11-17
+
+- test: sync the mapped file so its pages are clean before the child maps it (76e0967)
+- feat: add external-process benchmark mode with RSS, PSS and dirty sampling (6f60524)
+
 ## v0.2.1 - 2026-11-17
 
 - fix: export the library modules so packages can depend on zig-bench (10e9bc1)
