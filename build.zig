@@ -34,6 +34,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/flamegraph.zig"),
     });
 
+    const perf_counters_module = b.addModule("perf_counters", .{
+        .root_source_file = b.path("src/perf_counters.zig"),
+    });
+
     // Advanced Features - Phase 2 modules
     const groups_module = b.addModule("groups", .{
         .root_source_file = b.path("src/groups.zig"),
@@ -253,11 +257,11 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
     for ([_]*std.Build.Module{
-        export_module,        comparison_module, memory_profiler_module, ci_module,
-        flamegraph_module,    groups_module,     warmup_module,          outliers_module,
-        parameterized_module, parallel_module,   streaming_module,       ab_testing_module,
-        diff_module,          monitoring_module, exporters_module,       profiling_module,
-        process_module,
+        export_module,        comparison_module,    memory_profiler_module, ci_module,
+        flamegraph_module,    groups_module,        warmup_module,          outliers_module,
+        parameterized_module, parallel_module,      streaming_module,       ab_testing_module,
+        diff_module,          monitoring_module,    exporters_module,       profiling_module,
+        process_module,       perf_counters_module,
     }) |module| {
         // Library modules carry no target, so test a copy that has one and the same imports.
         const test_mod = b.createModule(.{

@@ -548,6 +548,31 @@ if (has_regression and ci_helper.shouldFailBuild(has_regression)) {
 }
 ```
 
+### Linux Hardware Counters
+
+Import the `perf_counters` module to measure cycles, instructions, cache misses and branch
+misses on the calling thread:
+
+```zig
+const perf = @import("perf_counters");
+
+var region = perf.Counters.start();
+defer if (region) |*active| active.deinit();
+for (0..iterations) |_| runIteration();
+if (region) |*active| {
+    if (active.finish()) |counts| {
+        if (counts.perUnit(iterations)) |per_iteration| {
+            std.debug.print("{d:.1} instructions per iteration\n", .{per_iteration.instructions});
+        }
+    }
+}
+```
+
+`start()` returns `null` when the CPU, platform or Linux perf policy cannot supply the full
+group. `finish()` closes the descriptors and returns `null` if the group never ran. Counts exclude
+kernel and hypervisor work and account for multiplexing. In a parallel benchmark, measure each
+worker on its own thread and add the counts before dividing by the total work.
+
 ### Flamegraph Generation
 
 ```zig
