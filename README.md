@@ -571,7 +571,12 @@ if (region) |*active| {
 `start()` returns `null` when the CPU, platform or Linux perf policy cannot supply the full
 group. `finish()` closes the descriptors and returns `null` if the group never ran. Counts exclude
 kernel and hypervisor work and account for multiplexing. In a parallel benchmark, measure each
-worker on its own thread and add the counts before dividing by the total work.
+worker on its own thread and add the counts before dividing by the total work. Start the sum with
+the first measured worker.
+
+`l1_data_load_misses` reports misses on L1 data cache loads when Linux supplies that event.
+It has its own field alongside `cache_misses`, which retains the kernel's generic cache-miss
+event. The L1 field is `null` if the event was unavailable for any measured region in the sum.
 
 ### Flamegraph Generation
 
